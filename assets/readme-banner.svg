@@ -1,36 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1440" height="360" viewBox="0 0 1440 360" role="img" aria-labelledby="title desc">
-  <title id="title">MCLA Recomp for Android ARM64</title>
-  <desc id="desc">A custom midnight-blue city skyline with the project title and experimental Android ARM64 label.</desc>
+  <title id="title">MCLA Xbox 360 Recomp for Android ARM64</title>
+  <desc id="desc">A custom graphite city skyline with green accents, the project title, and an experimental Android ARM64 label.</desc>
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#07111f"/>
-      <stop offset="0.55" stop-color="#102d49"/>
-      <stop offset="1" stop-color="#165b73"/>
+      <stop offset="0" stop-color="#080d0a"/>
+      <stop offset="0.55" stop-color="#14251a"/>
+      <stop offset="1" stop-color="#28523a"/>
     </linearGradient>
     <linearGradient id="glow" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#25d0c2" stop-opacity="0.9"/>
-      <stop offset="1" stop-color="#79f2cf" stop-opacity="0.15"/>
+      <stop offset="0" stop-color="#76d64b" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#d4ff72" stop-opacity="0.15"/>
     </linearGradient>
     <pattern id="windows" width="34" height="30" patternUnits="userSpaceOnUse">
-      <rect x="7" y="7" width="5" height="8" rx="1" fill="#71dfd1" opacity="0.45"/>
-      <rect x="22" y="7" width="5" height="8" rx="1" fill="#ffc978" opacity="0.34"/>
+      <rect x="7" y="7" width="5" height="8" rx="1" fill="#8ce06a" opacity="0.48"/>
+      <rect x="22" y="7" width="5" height="8" rx="1" fill="#d4d98b" opacity="0.32"/>
     </pattern>
     <filter id="blur"><feGaussianBlur stdDeviation="30"/></filter>
   </defs>
   <rect width="1440" height="360" rx="28" fill="url(#sky)"/>
-  <circle cx="1170" cy="90" r="80" fill="#30c9bf" opacity="0.16" filter="url(#blur)"/>
+  <circle cx="1170" cy="90" r="80" fill="#7ed84e" opacity="0.18" filter="url(#blur)"/>
+  <ellipse cx="1224" cy="166" rx="145" ry="88" fill="none" stroke="#a5e979" stroke-width="1.5" opacity="0.16"/>
+  <ellipse cx="1224" cy="166" rx="176" ry="108" fill="none" stroke="#a5e979" stroke-width="1" opacity="0.09"/>
   <path d="M0 264 210 236 390 255 570 207 770 245 970 194 1175 230 1440 178V360H0Z" fill="#0b2033" opacity="0.8"/>
   <g fill="#091827">
     <path d="M0 282h92v-94h45v41h51v-71h71v124h66v-93h52v-48h81v141h62v-74h62v-66h75v140h61v-104h59v-57h80v161h64v-84h65v-48h62v132h67v-116h57v-43h79v159h75v-90h59v-61h83v151H0Z"/>
   </g>
   <path d="M0 286h92v-98h45v42h51v-71h71v125h66v-94h52v-48h81v142h62v-74h62v-66h75v140h61v-104h59v-57h80v161h64v-84h65v-48h62v132h67v-116h57v-43h79v159h75v-90h59v-61h83v151H0Z" fill="url(#windows)" opacity="0.8"/>
   <path d="M40 319h1360" stroke="url(#glow)" stroke-width="2" opacity="0.9"/>
-  <path d="M790 322c160-19 335-19 555-1" fill="none" stroke="#49dacc" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+  <path d="M790 322c160-19 335-19 555-1" fill="none" stroke="#8cde5c" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
   <g font-family="Inter,Segoe UI,Arial,sans-serif">
     <text x="96" y="127" fill="#f1f8ff" font-size="52" font-weight="700" letter-spacing="-1.5">MIDNIGHT CLUB: LOS ANGELES</text>
-    <text x="99" y="177" fill="#9fe8df" font-size="28" font-weight="500" letter-spacing="3">RECOMP · ANDROID ARM64</text>
-    <rect x="99" y="207" width="154" height="34" rx="17" fill="#123f50" stroke="#46d5c8" stroke-opacity="0.65"/>
-    <circle cx="118" cy="224" r="5" fill="#73e8c6"/>
-    <text x="133" y="230" fill="#d1f8f0" font-size="14" font-weight="700" letter-spacing="1.4">EXPERIMENTAL</text>
+    <text x="99" y="177" fill="#b8e998" font-size="25" font-weight="600" letter-spacing="2.5">XBOX 360 RECOMP · ANDROID ARM64</text>
+    <rect x="99" y="207" width="154" height="34" rx="17" fill="#1b3820" stroke="#8ddf5d" stroke-opacity="0.7"/>
+    <circle cx="118" cy="224" r="5" fill="#9be66d"/>
+    <text x="133" y="230" fill="#e4f7d5" font-size="14" font-weight="700" letter-spacing="1.4">EXPERIMENTAL</text>
   </g>
 </svg>

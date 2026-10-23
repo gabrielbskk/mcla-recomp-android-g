@@ -1,7 +1,7 @@
 # Midnight Club: Los Angeles Recomp — Android ARM64
 
 <p align="center">
-  <img src="assets/readme-banner.svg" alt="Midnight Club: Los Angeles Recomp for Android ARM64 — experimental" width="100%" />
+  <img src="assets/readme-banner.svg" alt="Midnight Club: Los Angeles Xbox 360 recomp for Android ARM64 — experimental" width="100%" />
 </p>
 
 An experimental, community-made Android port of the Xbox 360 edition of *Midnight Club: Los Angeles Complete Edition*. This fork focuses on running the recompiled C++ game natively on Android ARM64, with development and testing centered on a Samsung Galaxy S23 using Termux.

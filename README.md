@@ -1,15 +1,31 @@
 # Midnight Club: Los Angeles Recomp — Android ARM64
 
+<p align="center">
+  <img src="assets/readme-banner.svg" alt="Midnight Club: Los Angeles Recomp for Android ARM64 — experimental" width="100%" />
+</p>
+
 An experimental, community-made Android port of the Xbox 360 edition of *Midnight Club: Los Angeles Complete Edition*. This fork focuses on running the recompiled C++ game natively on Android ARM64, with development and testing centered on a Samsung Galaxy S23 using Termux.
 
 **This project is experimental.** Earlier builds reached the city on the S23 but had very low performance. The latest documented build has not been launched during the current review, and current gameplay stability, file-open coverage, and frame rate are unverified. Other devices and GPUs have not been validated. The README does not promise that the game is playable or that 30 FPS is attainable.
 
-## Android setup and current status
+## Project at a glance
 
-- [Android build, import flow, and requirements](android/README.md)
-- [V8 continuity and evidence summary](docs/CONTINUITY_SUMMARY.md)
-- [Latest launcher observations](docs/testing/android-ui-last-two-observations-2026-10-23.md)
-- [Screenshots](docs/ui/)
+| Area | Current scope |
+|---|---|
+| Target | Android ARM64; tested on a Samsung Galaxy S23 only |
+| Recompilation | C++ generated from Xbox 360 PowerPC code using ReXGlue |
+| Build workflow | Native build and APK packaging with Termux and Android SDK/NDK tools |
+| Game data | User-provided files imported into app-private `filesDir/game` |
+| Release state | Experimental; gameplay, stability, and FPS for the latest build are unverified |
+
+## Start here
+
+| Guide | What it covers |
+|---|---|
+| [Android build and import guide](android/README.md) | Termux build steps, private data import, requirements, and limitations |
+| [V8 continuity summary](docs/CONTINUITY_SUMMARY.md) | Current implementation, what is verified, and what still needs device testing |
+| [Launcher observations](docs/testing/android-ui-last-two-observations-2026-10-23.md) | What the two latest UI screenshots do and do not prove |
+| [Historical platform notes](docs/OTHER_PLATFORMS_HISTORICAL.md) | Archived Windows/Linux/PS5 documentation, not active support for this fork |
 
 The launcher imports user-provided game files into the app's private `filesDir/game` directory. The runtime is configured to read from that private directory. The APK does not include the game or its assets. Uninstalling the app removes imported game data and saves stored in its private directory.
 

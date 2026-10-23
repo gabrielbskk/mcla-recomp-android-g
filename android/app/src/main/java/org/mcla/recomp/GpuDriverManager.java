@@ -47,13 +47,13 @@ final class GpuDriverManager {
     static Selection prepare(Context context) {
         File root = new File(context.getFilesDir(), ROOT);
         if (!root.isDirectory() && !root.mkdirs()) {
-            return selectSystem(context, "Não foi possível preparar a pasta de drivers.");
+            return selectSystem(context, "Could not prepare the driver directory.");
         }
 
         File failedStart = new File(root, FAILED_START);
         if (failedStart.isFile()) {
             failedStart.delete();
-            return selectSystem(context, "Driver alternativo falhou na sessão anterior; usando o driver do sistema.");
+            return selectSystem(context, "The alternate driver failed last session; using the system driver.");
         }
 
         String renderer = detectGlRenderer();
@@ -72,7 +72,7 @@ final class GpuDriverManager {
         }
 
         if (profile == null) {
-            return selectSystem(context, "GPU sem perfil alternativo validado.", renderer);
+            return selectSystem(context, "No validated alternate profile for this GPU.", renderer);
         }
 
         File driverDirectory = new File(root, profile);
@@ -82,20 +82,20 @@ final class GpuDriverManager {
                 extractDriver(context, asset, driverDirectory, library, profile);
             } catch (Exception exception) {
                 Log.w(TAG, "Could not prepare " + profile + "; using system Vulkan", exception);
-                return selectSystem(context, "Driver alternativo indisponível; usando o driver do sistema.", renderer);
+                return selectSystem(context, "Alternate driver unavailable; using the system driver.", renderer);
             }
         }
 
         if (!driverLibrary.isFile() || driverLibrary.length() == 0) {
-            return selectSystem(context, "Driver alternativo incompleto; usando o driver do sistema.", renderer);
+            return selectSystem(context, "Alternate driver is incomplete; using the system driver.", renderer);
         }
 
         writeSelection(context, profile);
-        return new Selection(profile, renderer, "Driver automático: " + profile + ".");
+        return new Selection(profile, renderer, "Selected driver profile: " + profile + ".");
     }
 
     private static Selection selectSystem(Context context, String message) {
-        return selectSystem(context, message, "indisponível");
+        return selectSystem(context, message, "unavailable");
     }
 
     private static Selection selectSystem(Context context, String message, String renderer) {

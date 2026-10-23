@@ -42,11 +42,11 @@
 
 ### Task 2: English Android app text
 
-**Files:** `strings.xml`, `DataSetupActivity.java`, `DataImportService.java`, `GpuDriverManager.java`, `DiagnosticsExporter.java`, `android/README.md`.
+**Files:** `DataSetupActivity.java`, `DataImportService.java`, `GpuDriverManager.java`, `DiagnosticsExporter.java`, `android/README.md`.
 
-- [ ] Translate app-owned labels, import progress/errors, driver status, and export results to English.
-- [ ] Document preset names and intent extras; correct the build instructions to the manual ARM64 Termux process.
-- [ ] Review Android-owned Java/resources for remaining user-visible Portuguese text.
+- [x] Translate app-owned labels, import progress/errors, driver status, and export results to English.
+- [x] Document preset names and intent extras; correct the build instructions to the manual ARM64 Termux process.
+- [x] Review Android-owned Java/resources for remaining user-visible Portuguese text.
 
 ### Task 3: Render callback counter and one-second telemetry
 

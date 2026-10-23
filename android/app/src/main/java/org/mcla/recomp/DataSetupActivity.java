@@ -65,18 +65,18 @@ public final class DataSetupActivity extends Activity {
                 progress.setIndeterminate(false);
                 progress.setProgress((int) Math.min(100L, copied * 100L / total));
             }
-            if (message != null) showStatus(message + "  " + formatBytes(copied)
-                    + (total > 0 ? " / " + formatBytes(total) : " copiados"));
+            if (message != null) showStatus(message + "  " + formatBytes(copied) + " copied"
+                    + (total > 0 ? " / " + formatBytes(total) : ""));
             if (intent.getBooleanExtra(DataImportService.EXTRA_FINISHED, false)) {
                 importing = false;
                 progress.setIndeterminate(false);
                 progress.setVisibility(ProgressBar.GONE);
                 setImportButtonsEnabled(true);
                 if (intent.getBooleanExtra(DataImportService.EXTRA_SUCCESS, false)) {
-                    showStatus("Dados importados e validados. Toque em Jogar.");
+                    showStatus("Game data imported and validated. Tap Play.");
                     play.setEnabled(true);
                 } else {
-                    showStatus("Importação não concluída: " + (message == null ? "erro desconhecido" : message));
+                    showStatus("Import failed: " + (message == null ? "unknown error" : message));
                     refreshReadiness();
                 }
             }
@@ -122,7 +122,7 @@ public final class DataSetupActivity extends Activity {
         root.addView(title, matchWrap());
         status = new TextView(this);
         status.setTextColor(Color.rgb(218, 224, 235)); status.setTextSize(16);
-        status.setText("Escolha os arquivos do jogo para importar.");
+        status.setText("Choose game files to import.");
         LinearLayout.LayoutParams statusLp = matchWrap(); statusLp.topMargin = dp(16);
         root.addView(status, statusLp);
 
@@ -132,14 +132,14 @@ public final class DataSetupActivity extends Activity {
         progressLp.topMargin = dp(14); root.addView(progress, progressLp);
 
         TextView settingsTitle = new TextView(this);
-        settingsTitle.setText("Configurações"); settingsTitle.setTextColor(Color.WHITE);
+        settingsTitle.setText("Settings"); settingsTitle.setTextColor(Color.WHITE);
         settingsTitle.setTextSize(20);
         LinearLayout.LayoutParams settingsTitleLp = matchWrap(); settingsTitleLp.topMargin = dp(22);
         root.addView(settingsTitle, settingsTitleLp);
-        addSpinnerSetting(root, "Resolução", new String[]{"540p", "720p", "1080p"},
+        addSpinnerSetting(root, "Resolution", new String[]{"540p", "720p", "1080p"},
                 "540p".equals(appSettings.resolution) ? 0 : "720p".equals(appSettings.resolution) ? 1 : 2,
                 index -> saveAppSetting("resolution", new String[]{"540p", "720p", "1080p"}[index]));
-        addSpinnerSetting(root, "Limite de FPS", new String[]{"30 FPS", "60 FPS", "120 FPS", "Sem limite"},
+        addSpinnerSetting(root, "FPS limit", new String[]{"30 FPS", "60 FPS", "120 FPS", "Uncapped"},
                 appSettings.fpsLimit == 0 ? 3 : appSettings.fpsLimit == 60 ? 1 : appSettings.fpsLimit == 120 ? 2 : 0,
                 index -> saveAppSetting("fps_limit", new String[]{"30", "60", "120", "0"}[index]));
         addSwitchSetting(root, "V-Sync", appSettings.vsync,
@@ -148,22 +148,22 @@ public final class DataSetupActivity extends Activity {
                 "super_low".equals(appSettings.effects) ? 0 : "low".equals(appSettings.effects) ? 1
                         : "medium".equals(appSettings.effects) ? 2 : "high".equals(appSettings.effects) ? 3 : 4,
                 index -> saveAppSetting("effects", new String[]{"super_low", "low", "medium", "high", "ultra"}[index]));
-        addSwitchSetting(root, "Contador de FPS (ligado por padrão)", appSettings.fpsCounter,
+        addSwitchSetting(root, "FPS counter (on by default)", appSettings.fpsCounter,
                 checked -> saveAppSetting("fps_counter", Boolean.toString(checked)));
-        addSwitchSetting(root, "Gravar log de desempenho", appSettings.performanceLogging,
+        addSwitchSetting(root, "Save performance log", appSettings.performanceLogging,
                 checked -> saveAppSetting("performance_logging", Boolean.toString(checked)));
 
-        importZip = addButton(root, "Importar ZIP", view -> chooseZip());
-        importFolder = addButton(root, "Importar pasta extraída", view -> chooseFolder());
-        addButton(root, "Selecionar ISO", view -> chooseIso());
+        importZip = addButton(root, "Import ZIP", view -> chooseZip());
+        importFolder = addButton(root, "Import extracted folder", view -> chooseFolder());
+        addButton(root, "Choose ISO", view -> chooseIso());
         includeVideos = new CheckBox(this);
-        includeVideos.setText("Incluir vídeos .bik opcionais (pode ocupar bastante espaço)");
+        includeVideos.setText("Include optional .bik videos (may use significant storage)");
         includeVideos.setTextColor(Color.rgb(218, 224, 235));
         includeVideos.setChecked(false);
         root.addView(includeVideos, matchWrap());
-        play = addButton(root, "Jogar", view -> launchGame(null));
+        play = addButton(root, "Play", view -> launchGame(null));
         play.setEnabled(false);
-        addButton(root, "Exportar logs", view -> exportLogs());
+        addButton(root, "Export logs", view -> exportLogs());
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
         scroll.addView(root);
@@ -230,7 +230,7 @@ public final class DataSetupActivity extends Activity {
             updated.save(settingsFile);
             appSettings = updated;
         } catch (java.io.IOException error) {
-            showStatus("Não foi possível salvar as configurações: " + error.getMessage());
+            showStatus("Could not save settings: " + error.getMessage());
         }
     }
 
@@ -266,7 +266,7 @@ public final class DataSetupActivity extends Activity {
             }, "mcla-log-export").start();
             return;
         }
-        showStatus("Selecione Documents; os arquivos serão exportados para MCLA/logs.");
+        showStatus("Choose Documents; files will be exported to MCLA/logs.");
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
@@ -279,7 +279,7 @@ public final class DataSetupActivity extends Activity {
         Uri uri = data.getData();
 
         if (requestCode == REQUEST_ISO) {
-            showStatus("ISO XGD não é extraída pelo app. Extraia a imagem no PC e depois escolha a pasta resultante.");
+            showStatus("The app cannot extract Xbox 360 XGD ISO images. Extract the image on a PC, then choose the resulting folder.");
         } else if (requestCode == REQUEST_LOG_FOLDER) {
             try {
                 int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
@@ -293,7 +293,7 @@ public final class DataSetupActivity extends Activity {
         } else if (requestCode == REQUEST_ZIP || requestCode == REQUEST_FOLDER) {
             String name = displayName(uri);
             if (requestCode == REQUEST_ZIP && name.toLowerCase(Locale.ROOT).endsWith(".iso")) {
-                showStatus("ISO XGD não é extraída pelo app. Extraia a imagem no PC e importe a pasta ou um ZIP.");
+                showStatus("The app cannot extract Xbox 360 XGD ISO images. Extract the image on a PC, then import the folder or a ZIP.");
                 return;
             }
             startImport(uri, requestCode == REQUEST_FOLDER, includeVideos.isChecked());
@@ -312,7 +312,7 @@ public final class DataSetupActivity extends Activity {
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             pendingImport = new PendingImport(uri, folder, videos);
-            showStatus("Permita notificações para acompanhar o progresso. Se negar, a importação ainda poderá continuar.");
+            showStatus("Allow notifications to follow import progress. The import can continue if you deny permission.");
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQUEST_NOTIFICATIONS);
             return;
         }
@@ -330,7 +330,7 @@ public final class DataSetupActivity extends Activity {
     private void performImport(Uri uri, boolean folder, boolean videos) {
         importing = true; play.setEnabled(false); setImportButtonsEnabled(false);
         progress.setVisibility(ProgressBar.VISIBLE); progress.setIndeterminate(true);
-        showStatus("Conferindo espaço e preparando a importação…");
+        showStatus("Checking storage and preparing import…");
         Intent service = new Intent(this, DataImportService.class)
                 .setAction(folder ? DataImportService.ACTION_IMPORT_FOLDER : DataImportService.ACTION_IMPORT_ZIP)
                 .setData(uri)
@@ -347,8 +347,8 @@ public final class DataSetupActivity extends Activity {
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed() || importing) return;
                 play.setEnabled(ready);
-                showStatus(ready ? "Dados privados validados. Pronto para jogar." :
-                        "Importe ZIP ou pasta extraída. O app usará uma cópia privada em filesDir/game.");
+                showStatus(ready ? "Private game data validated. Ready to play." :
+                        "Import a ZIP or extracted folder. The app stores a private copy in filesDir/game.");
                 if (ready && !testLaunchStarted && hasIntentOverrides(getIntent())) {
                     testLaunchStarted = true;
                     launchGame(getIntent());
@@ -382,7 +382,7 @@ public final class DataSetupActivity extends Activity {
                     startActivity(game);
                     finish();
                 } catch (RuntimeException exception) {
-                    showStatus("Não consegui abrir o jogo: " + exception.getMessage());
+                    showStatus("Could not launch the game: " + exception.getMessage());
                     refreshReadiness();
                 }
             });

@@ -67,7 +67,7 @@ public final class DataImportService extends Service {
     private PowerManager.WakeLock wakeLock;
     private long copiedBytes;
     private long totalBytes;
-    private String progressMessage = "Importando dados";
+    private String progressMessage = "Importing game data";
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent == null || intent.getData() == null) {
@@ -75,7 +75,7 @@ public final class DataImportService extends Service {
             return START_NOT_STICKY;
         }
         createNotificationChannel();
-        Notification notification = buildNotification("Preparando importação", 0, 0);
+        Notification notification = buildNotification("Preparing import", 0, 0);
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
         } else {
@@ -99,7 +99,7 @@ public final class DataImportService extends Service {
     @Override public void onTimeout(int startId, int foregroundServiceType) {
         timedOut = true;
         cancelled = true;
-        sendProgress("Android interrompeu a importação por limite de tempo. Inicie novamente para continuar.",
+        sendProgress("Android stopped the import after its time limit. Start the import again to continue.",
                 true, false);
         releaseWakeLock();
         stopForeground(STOP_FOREGROUND_REMOVE);
@@ -110,17 +110,17 @@ public final class DataImportService extends Service {
 
     private void runImport(Uri source, boolean folder, boolean includeBik, int startId) {
         boolean success = false;
-        String error = "Importação cancelada.";
+        String error = "Import canceled.";
         try {
             File privateRoot = getFilesDir();
             File game = new File(privateRoot, "game");
             File previous = new File(privateRoot, "game.previous");
             if (previous.exists()) {
-                throw new IOException("Há uma cópia anterior preservada. Não vou apagá-la; resolva isso antes de importar outra vez.");
+                throw new IOException("A previous copy is preserved. It will not be deleted automatically; resolve it before importing again.");
             }
             File stage = new File(privateRoot, "game.part");
-            if (!stage.exists() && !stage.mkdirs()) throw new IOException("Não consegui criar a pasta privada de preparação.");
-            if (!stage.isDirectory()) throw new IOException("game.part existe, mas não é uma pasta.");
+            if (!stage.exists() && !stage.mkdirs()) throw new IOException("Could not create the private staging directory.");
+            if (!stage.isDirectory()) throw new IOException("game.part exists but is not a directory.");
 
             Map<String, Long> sizes;
             if (folder) {
@@ -141,13 +141,13 @@ public final class DataImportService extends Service {
 
             validateStagedGame(stage, sizes);
             writeReadyMarker(stage, sizes);
-            if (!validateInstalledGame(stage)) throw new IOException("A preparação não passou na validação SHA/tamanho.");
+            if (!validateInstalledGame(stage)) throw new IOException("Staged game data failed size or SHA-256 validation.");
             commitStage(stage, new File(privateRoot, "game"));
             success = validateInstalledGame(new File(privateRoot, "game"));
-            if (!success) throw new IOException("A pasta copiada não passou na validação final.");
-            error = "Importação concluída e arquivos obrigatórios validados.";
+            if (!success) throw new IOException("The copied game data failed final validation.");
+            error = "Import completed; required game files are valid.";
         } catch (Exception exception) {
-            error = timedOut ? "Android interrompeu a importação por limite de tempo. Inicie novamente para continuar."
+            error = timedOut ? "Android stopped the import after its time limit. Start the import again to continue."
                     : (exception.getMessage() == null ? exception.toString() : exception.getMessage());
         } finally {
             sendProgress(error, true, success);
@@ -166,7 +166,7 @@ public final class DataImportService extends Service {
             long expandedTotal = 0;
             while ((entry = zip.getNextZipEntry()) != null) {
                 throwIfCancelled();
-                if (++entries > MAX_TREE_NODES) throw new IOException("O ZIP tem itens demais.");
+                if (++entries > MAX_TREE_NODES) throw new IOException("The ZIP contains too many entries.");
                 String relative = normalizedGamePath(entry.getName());
                 boolean keep = shouldKeep(relative, entry.isDirectory(), includeBik);
                 long bytes = 0;
@@ -174,19 +174,19 @@ public final class DataImportService extends Service {
                 while ((count = zip.read(buffer)) != -1) {
                     throwIfCancelled();
                     expandedTotal += count;
-                    if (expandedTotal > MAX_GAME_BYTES) throw new IOException("O ZIP expandido passa do limite de segurança de 20 GB.");
+                    if (expandedTotal > MAX_GAME_BYTES) throw new IOException("The expanded ZIP exceeds the 20 GB safety limit.");
                     if (keep) bytes += count;
                 }
                 if (keep && !entry.isDirectory()) {
                     Long declared = entry.getSize() >= 0 ? entry.getSize() : null;
                     long measured = declared == null ? bytes : declared;
-                    if (declared != null && bytes != declared) throw new IOException("Tamanho ZIP inconsistente: " + relative);
+                    if (declared != null && bytes != declared) throw new IOException("ZIP size mismatch: " + relative);
                     putUniqueSize(sizes, relative, measured);
                 }
-                if (sumSizes(sizes) > MAX_GAME_BYTES) throw new IOException("Os dados passam do limite de 20 GB.");
+                if (sumSizes(sizes) > MAX_GAME_BYTES) throw new IOException("Game data exceeds the 20 GB limit.");
             }
         } catch (IllegalArgumentException exception) {
-            throw new IOException("ZIP inválido ou não suportado: " + exception.getMessage(), exception);
+            throw new IOException("Invalid or unsupported ZIP: " + exception.getMessage(), exception);
         }
         return sizes;
     }
@@ -206,15 +206,15 @@ public final class DataImportService extends Service {
                     while ((skipped = zip.read(buffer)) != -1) {
                         throwIfCancelled();
                         expandedTotal += skipped;
-                        if (expandedTotal > MAX_GAME_BYTES) throw new IOException("O ZIP expandido passa do limite de segurança de 20 GB.");
+                        if (expandedTotal > MAX_GAME_BYTES) throw new IOException("The expanded ZIP exceeds the 20 GB safety limit.");
                     }
                     continue;
                 }
                 Long expectedSize = expected.get(relative);
-                if (expectedSize == null) throw new IOException("O ZIP mudou entre a verificação e a extração.");
+                if (expectedSize == null) throw new IOException("The ZIP changed between preflight and extraction.");
                 File target = safeOutput(stage, relative);
                 if (!target.getParentFile().isDirectory() && !target.getParentFile().mkdirs()) {
-                    throw new IOException("Não consegui criar uma pasta dos arquivos.");
+                    throw new IOException("Could not create a game-data directory.");
                 }
                 File temp = new File(target.getPath() + ".copying");
                 MessageDigest digest = "default.xex".equals(new File(relative).getName()) ? sha256() : null;
@@ -229,22 +229,22 @@ public final class DataImportService extends Service {
                         expandedTotal += read;
                         copiedBytes += read;
                         if (count > MAX_GAME_BYTES || expandedTotal > MAX_GAME_BYTES) {
-                            throw new IOException("O ZIP expandido passa do limite de segurança de 20 GB.");
+                            throw new IOException("The expanded ZIP exceeds the 20 GB safety limit.");
                         }
                         if (!skipWrite) output.write(buffer, 0, read);
-                        if ((copiedBytes & ((4 * 1024 * 1024) - 1)) < read) sendProgress("Copiando", false, false);
+                        if ((copiedBytes & ((4 * 1024 * 1024) - 1)) < read) sendProgress("Copying game data", false, false);
                     }
                 }
-                if (count != expectedSize) throw new IOException("Tamanho inconsistente no arquivo " + relative);
+                if (count != expectedSize) throw new IOException("File size mismatch: " + relative);
                 if ("default.xex".equals(new File(relative).getName())) {
                     byte[] sourceHash = digest.digest();
                     byte[] targetHash = sha256File(skipWrite ? target : temp);
                     if (!MessageDigest.isEqual(sourceHash, targetHash)) {
                         if (skipWrite) {
                             // Same size but different XEX: rewrite this entry in a separate pass is unsafe for a stream.
-                            throw new IOException("default.xex já existe com o mesmo tamanho, mas hash diferente. Remova game.part para importar novamente.");
+                            throw new IOException("default.xex already exists with the same size but a different hash. Remove game.part before importing again.");
                         }
-                        throw new IOException("SHA-256 do default.xex divergiu durante a cópia.");
+                        throw new IOException("default.xex SHA-256 changed during copying.");
                     }
                 }
                 if (!skipWrite) moveFile(temp, target);
@@ -252,7 +252,7 @@ public final class DataImportService extends Service {
             }
         }
         for (String required : REQUIRED) if (!seen.containsKey(required) && !new File(stage, required).isFile()) {
-            throw new IOException("Faltou " + required + " no ZIP.");
+            throw new IOException("Required file is missing: " + required + " no ZIP.");
         }
     }
 
@@ -262,7 +262,7 @@ public final class DataImportService extends Service {
             throwIfCancelled();
             File target = safeOutput(stage, source.relativePath);
             File parent = target.getParentFile();
-            if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("Não consegui criar uma pasta dos arquivos.");
+            if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("Could not create a game-data directory.");
             MessageDigest sourceDigest = "default.xex".equals(source.relativePath) ? sha256() : null;
             boolean skipWrite = target.isFile() && source.size >= 0 && target.length() == source.size
                     && sourceDigest == null;
@@ -270,30 +270,30 @@ public final class DataImportService extends Service {
             long count = 0;
             try (InputStream input = resolver().openInputStream(source.uri);
                  OutputStreamWithDigest output = skipWrite ? null : new OutputStreamWithDigest(temp, sourceDigest)) {
-                if (input == null) throw new IOException("Não consegui abrir " + source.relativePath);
+                if (input == null) throw new IOException("Could not open " + source.relativePath);
                 int read;
                 while ((read = input.read(buffer)) != -1) {
                     throwIfCancelled();
                     count += read; copiedBytes += read;
-                    if (count > MAX_GAME_BYTES || copiedBytes > MAX_GAME_BYTES) throw new IOException("Os dados passam do limite de 20 GB.");
+                    if (count > MAX_GAME_BYTES || copiedBytes > MAX_GAME_BYTES) throw new IOException("Game data exceeds the 20 GB limit.");
                     if (!skipWrite) output.write(buffer, 0, read);
-                    if ((copiedBytes & ((4 * 1024 * 1024) - 1)) < read) sendProgress("Copiando", false, false);
+                    if ((copiedBytes & ((4 * 1024 * 1024) - 1)) < read) sendProgress("Copying game data", false, false);
                 }
             }
-            if (source.size >= 0 && count != source.size) throw new IOException("Tamanho inconsistente no arquivo " + source.relativePath);
+            if (source.size >= 0 && count != source.size) throw new IOException("File size mismatch: " + source.relativePath);
             if (sourceDigest != null) {
                 byte[] sourceHash = sourceDigest.digest();
                 byte[] targetHash = sha256File(skipWrite ? target : temp);
-                if (!MessageDigest.isEqual(sourceHash, targetHash)) throw new IOException("SHA-256 do default.xex divergiu durante a cópia.");
+                if (!MessageDigest.isEqual(sourceHash, targetHash)) throw new IOException("default.xex SHA-256 changed during copying.");
             }
             if (!skipWrite) moveFile(temp, target);
-            if (count > 0) sendProgress("Copiando", false, false);
+            if (count > 0) sendProgress("Copying game data", false, false);
         }
     }
 
     private List<SourceFile> scanFolder(Uri tree, boolean includeBik) throws IOException {
         Uri gameRoot = findGameRoot(tree);
-        if (gameRoot == null) throw new IOException("A pasta escolhida não contém os cinco arquivos obrigatórios na mesma pasta.");
+        if (gameRoot == null) throw new IOException("The selected folder does not contain all five required files in one directory.");
         List<SourceFile> result = new ArrayList<>();
         scanChildren(gameRoot, "", includeBik, result, 0, new int[] {0});
         return result;
@@ -301,10 +301,10 @@ public final class DataImportService extends Service {
 
     private void scanChildren(Uri parent, String prefix, boolean includeBik,
                               List<SourceFile> result, int depth, int[] visited) throws IOException {
-        if (depth > MAX_TREE_DEPTH) throw new IOException("A pasta tem profundidade excessiva.");
+        if (depth > MAX_TREE_DEPTH) throw new IOException("The selected folder is nested too deeply.");
         for (Node node : children(parent)) {
             throwIfCancelled();
-            if (++visited[0] > MAX_TREE_NODES) throw new IOException("A pasta selecionada contém itens demais.");
+            if (++visited[0] > MAX_TREE_NODES) throw new IOException("The selected folder contains too many items.");
             String relative = prefix.isEmpty() ? node.name : prefix + "/" + node.name;
             if (node.directory) {
                 if (includeBik) scanChildren(node.uri, relative, true, result, depth + 1, visited);
@@ -313,7 +313,7 @@ public final class DataImportService extends Service {
             String safe = normalizedGamePath(relative);
             if (!shouldKeep(safe, false, includeBik)) continue;
             result.add(new SourceFile(node.uri, safe, node.size));
-            if (result.size() > MAX_TREE_NODES) throw new IOException("A pasta selecionada tem itens demais.");
+            if (result.size() > MAX_TREE_NODES) throw new IOException("The selected folder contains too many items.");
         }
     }
 
@@ -344,7 +344,7 @@ public final class DataImportService extends Service {
                     ? DocumentsContract.getDocumentId(treeOrDocument)
                     : DocumentsContract.getTreeDocumentId(treeOrDocument);
         } catch (IllegalArgumentException exception) {
-            throw new IOException("URI de pasta SAF inválida.", exception);
+            throw new IOException("Invalid SAF folder URI.", exception);
         }
         Uri childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeOrDocument, documentId);
         List<Node> result = new ArrayList<>();
@@ -352,7 +352,7 @@ public final class DataImportService extends Service {
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
                 DocumentsContract.Document.COLUMN_SIZE};
         try (Cursor cursor = resolver().query(childrenUri, columns, null, null, null)) {
-            if (cursor == null) throw new IOException("O provedor não permite listar esta pasta.");
+            if (cursor == null) throw new IOException("The document provider cannot list this folder.");
             int idCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID);
             int nameCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME);
             int mimeCol = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE);
@@ -365,13 +365,13 @@ public final class DataImportService extends Service {
                 result.add(new Node(uri, name, DocumentsContract.Document.MIME_TYPE_DIR.equals(mime), size));
             }
         } catch (SecurityException exception) {
-            throw new IOException("O acesso concedido à pasta expirou; selecione-a novamente.", exception);
+            throw new IOException("Access to the selected folder expired. Select it again.", exception);
         }
         return result;
     }
 
     private void checkFreeSpace(long requiredBytes, File stage, File game) throws IOException {
-        if (requiredBytes <= 0 || requiredBytes > MAX_GAME_BYTES) throw new IOException("Tamanho total dos dados inválido.");
+        if (requiredBytes <= 0 || requiredBytes > MAX_GAME_BYTES) throw new IOException("Invalid total game-data size.");
         long total = stage.getTotalSpace();
         long free = stage.getUsableSpace();
         long reserve = Math.max(MIN_FREE_RESERVE, requiredBytes / 20);
@@ -383,17 +383,17 @@ public final class DataImportService extends Service {
         long retainedBytes = checkedAdd(stageAlreadyAllocated, currentGameBytes);
         long additionalBytes = checkedAdd(requiredBytes, reserve);
         if (free <= 0 || !ImportSpaceBudget.fits(total, free, retainedBytes, additionalBytes)) {
-            throw new IOException("Espaço livre insuficiente. Necessário aproximadamente "
-                    + formatBytes(additionalBytes) + " adicionais. A preparação mantém "
-                    + formatBytes(retainedBytes) + " entre game.part e game durante a cópia.");
+            throw new IOException("Not enough free storage. About "
+                    + formatBytes(additionalBytes) + " more is required. The import keeps "
+                    + formatBytes(retainedBytes) + " across game.part and game while copying.");
         }
     }
 
     private void throwIfCancelled() throws IOException {
         if (cancelled) {
             throw new IOException(timedOut
-                    ? "Android interrompeu a importação por limite de tempo. Inicie novamente para continuar."
-                    : "Importação interrompida.");
+                    ? "Android stopped the import after its time limit. Start the import again to continue."
+                    : "Import interrupted.");
         }
     }
 
@@ -401,7 +401,7 @@ public final class DataImportService extends Service {
         if (!root.exists()) return 0;
         if (root.isFile()) return root.length();
         File[] children = root.listFiles();
-        if (children == null) throw new IOException("Não consegui medir o espaço já ocupado em " + root.getName() + ".");
+        if (children == null) throw new IOException("Could not measure storage used by " + root.getName() + ".");
         long total = 0;
         for (File child : children) total = checkedAdd(total, directoryBytes(child));
         return total;
@@ -409,7 +409,7 @@ public final class DataImportService extends Service {
 
     private static long checkedAdd(long left, long right) throws IOException {
         if (left < 0 || right < 0 || right > Long.MAX_VALUE - left) {
-            throw new IOException("Tamanho total dos dados inválido.");
+            throw new IOException("Invalid total game-data size.");
         }
         return left + right;
     }
@@ -429,11 +429,11 @@ public final class DataImportService extends Service {
             File file = new File(stage, name);
             Long expectedSize = expected.get(name);
             if (!file.isFile() || file.length() <= 0 || expectedSize == null || file.length() != expectedSize) {
-                throw new IOException("Arquivo obrigatório ausente ou incompleto: " + name);
+                throw new IOException("Required file is missing or incomplete: " + name);
             }
         }
         File xex = new File(stage, "default.xex");
-        if (sha256File(xex).length != 32) throw new IOException("Não consegui validar SHA-256 do default.xex.");
+        if (sha256File(xex).length != 32) throw new IOException("Could not validate default.xex SHA-256.");
     }
 
     static boolean validateInstalledGame(File game) {
@@ -468,18 +468,18 @@ public final class DataImportService extends Service {
 
     private void commitStage(File stage, File game) throws IOException {
         File previous = new File(getFilesDir(), "game.previous");
-        if (previous.exists()) throw new IOException("Há uma cópia anterior preservada em game.previous. Não vou removê-la automaticamente.");
-        if (game.exists() && !game.renameTo(previous)) throw new IOException("Não consegui preservar a pasta game existente.");
+        if (previous.exists()) throw new IOException("A previous copy is preserved in game.previous. It will not be removed automatically.");
+        if (game.exists() && !game.renameTo(previous)) throw new IOException("Could not preserve the existing game directory.");
         if (!stage.renameTo(game)) {
             if (previous.exists()) previous.renameTo(game);
-            throw new IOException("Não consegui trocar game.part pela pasta game.");
+            throw new IOException("Could not promote game.part to game.");
         }
     }
 
     private static Map<String, Long> sizesOf(List<SourceFile> files) throws IOException {
         Map<String, Long> result = new HashMap<>();
         for (SourceFile source : files) {
-            if (source.size < 0) throw new IOException("O provedor não informou o tamanho de " + source.relativePath + "; tente outro seletor de arquivos.");
+            if (source.size < 0) throw new IOException("The provider did not report the size of " + source.relativePath + "; try another file picker.");
             putUniqueSize(result, source.relativePath, source.size);
         }
         return result;
@@ -488,19 +488,19 @@ public final class DataImportService extends Service {
     private static long sumSizes(Map<String, Long> sizes) throws IOException {
         long total = 0;
         for (long size : sizes.values()) {
-            if (size < 0 || size > MAX_GAME_BYTES - total) throw new IOException("Tamanho total acima do limite de 20 GB.");
+            if (size < 0 || size > MAX_GAME_BYTES - total) throw new IOException("Total size exceeds the 20 GB limit.");
             total += size;
         }
         return total;
     }
 
     private static void checkRequired(Set<String> paths) throws IOException {
-        for (String required : REQUIRED) if (!paths.contains(required)) throw new IOException("Faltou " + required + " nos dados selecionados.");
+        for (String required : REQUIRED) if (!paths.contains(required)) throw new IOException("Required file is missing: " + required + " in the selected game data.");
     }
 
     private static void putUniqueSize(Map<String, Long> map, String path, long size) throws IOException {
         Long old = map.put(path, size);
-        if (old != null) throw new IOException("O arquivo aparece mais de uma vez: " + path);
+        if (old != null) throw new IOException("Duplicate file entry: " + path);
     }
 
     private static boolean shouldKeep(String path, boolean directory, boolean includeBik) {
@@ -512,11 +512,11 @@ public final class DataImportService extends Service {
     private static String normalizedGamePath(String original) throws IOException {
         if (original == null || original.isEmpty()) return "";
         String path = original.replace('\\', '/');
-        if (path.startsWith("/") || path.matches("^[A-Za-z]:.*")) throw new IOException("O ZIP contém caminho absoluto: " + original);
+        if (path.startsWith("/") || path.matches("^[A-Za-z]:.*")) throw new IOException("The ZIP contains an absolute path: " + original);
         StringBuilder normalized = new StringBuilder();
         for (String part : path.split("/")) {
             if (part.isEmpty() || part.equals(".")) continue;
-            if (part.equals("..") || part.indexOf('\0') >= 0) throw new IOException("O ZIP contém caminho inseguro.");
+            if (part.equals("..") || part.indexOf('\0') >= 0) throw new IOException("The ZIP contains an unsafe path.");
             if (normalized.length() > 0) normalized.append('/');
             normalized.append(part);
         }
@@ -531,18 +531,18 @@ public final class DataImportService extends Service {
         File target = new File(root, relative);
         String canonicalRoot = root.getCanonicalPath();
         String canonicalTarget = target.getCanonicalPath();
-        if (!canonicalTarget.startsWith(canonicalRoot + File.separator)) throw new IOException("Caminho de saída fora da pasta privada.");
+        if (!canonicalTarget.startsWith(canonicalRoot + File.separator)) throw new IOException("Output path is outside the private game directory.");
         return target;
     }
 
     private static void moveFile(File from, File to) throws IOException {
-        if (to.exists() && !to.delete()) throw new IOException("Não consegui substituir " + to.getName());
-        if (!from.renameTo(to)) throw new IOException("Não consegui finalizar " + to.getName());
+        if (to.exists() && !to.delete()) throw new IOException("Could not replace " + to.getName());
+        if (!from.renameTo(to)) throw new IOException("Could not finalize " + to.getName());
     }
 
     private static MessageDigest sha256() throws IOException {
         try { return MessageDigest.getInstance("SHA-256"); }
-        catch (NoSuchAlgorithmException exception) { throw new IOException("SHA-256 indisponível.", exception); }
+        catch (NoSuchAlgorithmException exception) { throw new IOException("SHA-256 is unavailable.", exception); }
     }
 
     private static byte[] sha256File(File file) throws IOException {
@@ -563,7 +563,7 @@ public final class DataImportService extends Service {
 
     private ZipArchiveInputStream openZip(Uri uri) throws IOException {
         InputStream input = resolver().openInputStream(uri);
-        if (input == null) throw new IOException("O seletor não forneceu leitura para o ZIP.");
+        if (input == null) throw new IOException("The file picker did not provide a readable ZIP stream.");
         return new ZipArchiveInputStream(new BufferedInputStream(input), "UTF-8", true, true);
     }
 
@@ -580,7 +580,7 @@ public final class DataImportService extends Service {
 
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
-            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Importação MCLA", NotificationManager.IMPORTANCE_LOW);
+            NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "MCLA Import", NotificationManager.IMPORTANCE_LOW);
             NotificationManager manager = getSystemService(NotificationManager.class);
             if (manager != null) manager.createNotificationChannel(channel);
         }
@@ -595,7 +595,7 @@ public final class DataImportService extends Service {
         builder.setSmallIcon(android.R.drawable.stat_sys_download)
                 .setContentTitle("MCLA Recomp")
                 .setContentText(message + " · " + formatBytes(copied) + (total > 0 ? " / " + formatBytes(total) : ""))
-                .setOngoing(!message.startsWith("Importação concluída"))
+                .setOngoing(!message.startsWith("Import completed"))
                 .setContentIntent(pending);
         if (total > 0) builder.setProgress(100, (int) Math.min(100, copied * 100 / total), false);
         else builder.setProgress(0, 0, true);

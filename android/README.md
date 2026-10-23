@@ -1,17 +1,17 @@
-# Android ARM64 — V8 (primary reference)
+# Android ARM64 — V8-based test build
 
-This guide describes the V8 Android implementation (`0.1.2-experimental`, `versionCode 3`). The source reference is the snapshot recorded in `docs/performance/s23-build-v8-status-2026-10-22.md`, together with the launcher captures in `docs/ui/`.
+This guide describes the V8-based Android implementation (`0.1.2-experimental`, `versionCode 3`) and later test instrumentation. The build and UI history is recorded in `docs/performance/` and `docs/ui/`.
 
 ## Current status
 
-- V8 was built as an ARM64 (`arm64-v8a`) Release APK and installed on the Galaxy S23 SM-S911B running Android 16 on 2026-10-22. The signed APK and signing key are archived on the netbook and are not in this repository.
+- The V8-derived test build targets ARM64 (`arm64-v8a`) and was exercised on a Galaxy S23 SM-S911B running Android 16. The signed APK and signing key are stored outside this repository.
 - The V8 screen offers **Import ZIP**, **Import extracted folder**, an optional `.bik` video checkbox, **Export logs**, and an ISO picker. Xbox 360 XGD ISO images are not extracted by the app.
-- The latest launcher capture shows `Dados privados validados. Pronto para jogar.` with **Play** enabled. This confirms that the app's local readiness validator accepted the private files at capture time; it does not prove which import action supplied them.
-- At the user's request, the game was not opened during the latest review. Reaching car selection with V8, runtime file-open evidence, and V8 FPS remain unverified.
-- ADB responded during the review, but the queried Android user did not list `org.mcla.recomp` as installed at the end. No APK was installed or launched in this review.
-- Behavior from earlier Android builds is historical and must not be attributed to V8 without a direct comparison. See [the earlier runtime analysis](../docs/performance/s23-runtime-analysis-2026-10-22.md).
+- The user confirmed reaching the car-selection screen with the I/O-trace test build. The trace shows `default.xex`, `xarchive_cache.rpf`, and `xarchive_audlo.rpf` activity; it records no attempt to open `nxeart` or `root_directory_padding.pad`. It records one failed open of `intro720.bik`, after which the game continued. This does not prove that every `.bik` file can be omitted.
+- The trace did not record `xarchive_audio.rpf` or `xarchive_music.rpf` before car selection. The import validator still requires all five configured files.
+- Frame-timer samples ranged from 1.8 to 29.9 guest ticks/s and included long stalls. These are not measured presented FPS. No 30 FPS result or performance improvement is verified.
+- Earlier Android measurements belong to older builds and must not be attributed to this build. See [the earlier runtime analysis](../docs/performance/s23-runtime-analysis-2026-10-22.md).
 
-## V8 import and storage
+## Import and storage
 
 The user selects a ZIP through Android's Storage Access Framework (`ACTION_OPEN_DOCUMENT`) or an extracted folder through `ACTION_OPEN_DOCUMENT_TREE`. The app copies the files into its private `filesDir/game`; the native runtime reads that private copy. This flow does not require `MANAGE_EXTERNAL_STORAGE` or the shared `/storage/emulated/0/MLR` directory.
 
@@ -33,11 +33,15 @@ Uninstalling the app removes imported files in `filesDir` and private saves. Bac
 
 ## Logs and diagnostics
 
-Runtime logs stay in the app-private directory and rotate. **Export logs** asks the user to choose a destination through SAF once; a destination such as `Documents/MCLA/logs` can be selected. This avoids broad storage permission. When available, the app also exports a report about the previous process exit.
+Runtime logs stay in the app-private directory and rotate. **Export logs** asks the user to choose a destination through SAF once; a destination such as `Documents/MCLA/logs` can be selected. The exporter includes `.log` and `.csv` files, gives each file a content-derived name so repeat exports reuse identical documents, and writes a report about the previous process exit when Android provides one. This avoids broad storage permission.
 
 ## Launcher settings and intent overrides
 
-The import screen has a **Configurações** section for guest resolution (540p/720p/1080p), FPS limit, V-Sync, effects preset, FPS counter, and optional performance logging. These are stored in the same private `filesDir/mcla-recomp/userdata/mcla.toml` read by ReXGlue at startup; the in-game settings menu uses the same cvars. The FPS counter defaults to enabled, including when no settings file exists. Performance logging defaults to off and, when enabled, writes one-second render-loop FPS, average frame time, and p95 to `filesDir/mcla-recomp/logs/performance.csv`. Fence-wait time split by submit/readback/acquire is marked unavailable until the renderer exports those counters; this build does not change the renderer.
+The launcher settings include guest resolution (540p/720p/1080p), FPS limit, V-Sync, graphics preset, FPS counter, and optional performance logging. They use the private `filesDir/mcla-recomp/userdata/mcla.toml` consumed by ReXGlue; the in-game menu uses the same cvars. The FPS counter defaults to enabled, including on fresh installs. The graphics preset defaults to **Medium** and offers **Super Low**, **Low**, **Medium**, **High**, and **Ultra**. Legacy `performance`, `balanced`, and `original` values map to Super Low, Medium, and Ultra.
+
+The overlay reports draw-callbacks per second and mean frame time. It does not measure completed Vulkan presents because this build does not hook the renderer's present path. The optional worker-thread log writes one-second `draw_fps`, average/p50/p95/p99/max frame time, and frames over 50 ms to `filesDir/mcla-recomp/logs/performance-v2.csv`. Submit/readback/acquire fence-wait columns remain unavailable until the renderer exports those counters. Guest game-timer ticks are reported separately in the runtime log.
+
+The Android app's own labels, import messages, driver status, and diagnostics are in English. Android's system file picker may follow the device language. Game dialogue and other game-authored assets retain the language in the imported files; no runtime language-switch option was found in this project.
 
 For a test run without changing the launcher controls, start the gameplay activity directly (game data must already be imported):
 
@@ -47,15 +51,15 @@ adb shell am start -n org.mcla.recomp.test/org.mcla.recomp.DataSetupActivity \
   --ez vsync false --ez fps_counter true --ez performance_logging true
 ```
 
-The launcher validates `filesDir/game` and automatically forwards the extras to gameplay when it is ready. Supported `effects` values are `low`/`performance`, `medium`/`balanced`, and `high`/`original`. Valid FPS limits are `-1`, `0`, `30`, `60`, `120`, and `240`; invalid extras fall back to the app defaults. Intent overrides apply only to that launch and do not rewrite the TOML file.
+The launcher validates `filesDir/game` and forwards the extras to gameplay when it is ready. Supported `effects` values are `super_low`, `low`, `medium`, `high`, and `ultra` (plus the legacy aliases above). Valid FPS limits are `-1`, `0`, `30`, `60`, `120`, and `240`; invalid extras fall back to app defaults. Intent overrides apply only to that launch and do not rewrite the TOML file.
 
-The current Android test build includes temporary file-open/read tracing. Export and review the app log before deciding whether `.bik`, `nxeart`, or `root_directory_padding.pad` are needed. No gameplay trace from this build has been reviewed yet, so those files remain unclassified by runtime evidence.
+The I/O-trace test build logs file opens and reads. Its user-confirmed run reached car selection. Treat missing-file evidence as scoped to that run; do not remove game files solely from this short trace.
 
 ## Build
 
-The V8 APK was built manually in Termux with the ARM64 toolchain and Gradle. The build record is in `docs/performance/s23-build-v8-status-2026-10-22.md` and the detailed private build report is archived on the netbook. Do not put game data in Git or version APK/XAPK/OBB files, XEX/RPF files, GPU driver archives, or signing keys.
+The V8 test APK was built in Termux. The complete Gradle build is not supported there because the SDK's CMake and AAPT2 tools are x86-64. Use the manual ARM64 process: build `libmain.so`, `librexruntime.so`, and `librexgpu-xenos.so` with the Termux ARM64 Clang/CMake toolchain, replace those libraries in the compatible base APK, then align and sign it. Keep the Android SDK, build outputs, APKs, and signing key outside Git. Do not version APK/XAPK/OBB files, game data, GPU driver archives, or signing material.
 
-To reproduce a build, provide the compatible Android-patched ReXGlue SDK, host `rexglue` code generator, Android SDK/NDK, and Python locally. The native build uses `scripts/build_android.sh`; Gradle packaging uses `android/gradlew`. Setting `MCLA_ANDROID_IO_TRACE=ON` enables temporary file open/read tracing. Tool paths and signing material must remain outside the repository.
+The native build uses `scripts/build_android.sh` with the Android-patched ReXGlue SDK and ARM64 tools. Setting `MCLA_ANDROID_IO_TRACE=ON` enables temporary file-open/read tracing. Tool paths and signing material must remain outside the repository.
 
 ## Launcher screenshots
 
@@ -68,4 +72,4 @@ See [the two-observation note](../docs/testing/android-ui-last-two-observations-
 
 ## Compatibility and performance
 
-V8 was packaged for ARM64 and installed on the S23 during the build round. There is no V8 FPS measurement or verified 30 FPS result. Earlier builds showed very poor performance; those measurements belong to older versions and must not be extrapolated to V8. Mali G52/G57, Xclipse, and other GPUs have not been validated with this version.
+This build has no verified presented-FPS measurement or 30 FPS result. The S23 session showed low guest tick rates and severe stalls, but those figures are not render FPS. Mali G52/G57, Xclipse, and other GPUs have not been validated with this version.

@@ -35,6 +35,16 @@ MEMORY_BACKEND = """#if REX_PLATFORM_ANDROID
 #else
 """
 
+GUEST_MAPS = """    if (!views_.all_views[n]) {
+      // Failed, so bail and try again.
+      UnmapViews();
+      return 1;
+    }
+  REXSYS_INFO("Guest memory arena mapped: virtual base 0x{:016X}, physical base 0x{:016X}",
+              reinterpret_cast<uintptr_t>(virtual_membase_),
+              reinterpret_cast<uintptr_t>(physical_membase_));
+"""
+
 
 class AndroidMemoryPatchTest(unittest.TestCase):
     def test_initializes_android_shared_memory_before_creating_mapping(self):
@@ -67,6 +77,14 @@ class AndroidMemoryPatchTest(unittest.TestCase):
             'REXFS_INFO("android io trace open_mapped path=\'{}\' offset={} bytes={} result={}");\n'
         )
         self.assertEqual(PATCHER.patch_android_host_entry(source), source)
+
+    def test_guest_map_patch_reports_failed_view_and_success_count(self):
+        patched = PATCHER.patch_android_guest_maps(GUEST_MAPS)
+        self.assertIn("Guest memory map attempt failed", patched)
+        self.assertIn("errno={}", patched)
+        self.assertIn("views={}", patched)
+        self.assertIn("rex::countof(views_.all_views)", patched)
+        self.assertEqual(PATCHER.patch_android_guest_maps(patched), patched)
 
 
 if __name__ == "__main__":

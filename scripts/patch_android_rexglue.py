@@ -402,6 +402,64 @@ ANDROID_GUEST_MEMORY_ERROR_PATCH = (
     'REXSYS_ERROR("Unable to create guest-memory backing store ({} bytes).", mapping_size);',
 )
 
+ANDROID_GUEST_MAP_FAILURE_PATCH = (
+    "    if (!views_.all_views[n]) {\n"
+    "      // Failed, so bail and try again.\n"
+    "      UnmapViews();\n"
+    "      return 1;\n"
+    "    }",
+    "    if (!views_.all_views[n]) {\n"
+    "      const int error = errno;\n"
+    "      const uintptr_t target_address = reinterpret_cast<uintptr_t>(\n"
+    "          mapping_base + map_info[n].virtual_address_start);\n"
+    "      const size_t view_size = map_info[n].virtual_address_end -\n"
+    "                               map_info[n].virtual_address_start + 1;\n"
+    "      const size_t file_offset = map_info[n].target_address & granularity_mask;\n"
+    "      REXSYS_ERROR(\"Guest memory map attempt failed: base=0x{:016X}, view={}, \"\n"
+    "                   \"addr=0x{:016X}, size=0x{:X}, offset=0x{:X}, \"\n"
+    "                   \"flags=MAP_SHARED|MAP_FIXED, prot=RW, errno={} ({})\",\n"
+    "                   reinterpret_cast<uintptr_t>(mapping_base), n, target_address, view_size,\n"
+    "                   file_offset, error, std::strerror(error));\n"
+    "      UnmapViews();\n"
+    "      return 1;\n"
+    "    }",
+)
+
+ANDROID_GUEST_MAP_SUCCESS_PATCH = (
+    "  REXSYS_INFO(\"Guest memory arena mapped: virtual base 0x{:016X}, physical base 0x{:016X}\",\n"
+    "              reinterpret_cast<uintptr_t>(virtual_membase_),\n"
+    "              reinterpret_cast<uintptr_t>(physical_membase_));",
+    "  REXSYS_INFO(\"Guest memory arena mapped: views={}, virtual base 0x{:016X}, physical base 0x{:016X}\",\n"
+    "              rex::countof(views_.all_views),\n"
+    "              reinterpret_cast<uintptr_t>(virtual_membase_),\n"
+    "              reinterpret_cast<uintptr_t>(physical_membase_));",
+)
+ANDROID_GUEST_MAP_SUCCESS_PATCH_LEGACY = ANDROID_GUEST_MAP_SUCCESS_PATCH[1].replace(
+    "rex::countof(views_.all_views)", "views_.all_views.size()"
+)
+
+ANDROID_MAP_FILE_ERRNO_PATCH = (
+    "  if (file_offset % page != 0) {\n"
+    "    return nullptr;\n"
+    "  }",
+    "  if (file_offset % page != 0) {\n"
+    "    errno = EINVAL;\n"
+    "    return nullptr;\n"
+    "  }",
+)
+
+ANDROID_MAP_FILE_MISMATCH_PATCH = (
+    "  if (base_address && result != base_address) {\n"
+    "    munmap(result, length);\n"
+    "    return nullptr;\n"
+    "  }",
+    "  if (base_address && result != base_address) {\n"
+    "    munmap(result, length);\n"
+    "    errno = EINVAL;\n"
+    "    return nullptr;\n"
+    "  }",
+)
+
 
 def patch_android_memory_backend(text: str) -> str:
     """Initialize Android shared memory lazily and report backing-store errors."""
@@ -411,6 +469,29 @@ def patch_android_memory_backend(text: str) -> str:
     if text.count(original) != 1:
         raise SystemExit("Expected one Android file-mapping backend block; SDK may have changed")
     return text.replace(original, patched, 1)
+
+
+def patch_android_guest_maps(text: str) -> str:
+    """Record one failed guest view per candidate base and the final mapped-view count."""
+    text = text.replace(ANDROID_GUEST_MAP_SUCCESS_PATCH_LEGACY, ANDROID_GUEST_MAP_SUCCESS_PATCH[1])
+    for original, patched in (ANDROID_GUEST_MAP_FAILURE_PATCH, ANDROID_GUEST_MAP_SUCCESS_PATCH):
+        if patched in text:
+            continue
+        if text.count(original) != 1:
+            raise SystemExit("Expected one guest-memory mapping diagnostic point; SDK may have changed")
+        text = text.replace(original, patched, 1)
+    return text
+
+
+def patch_android_map_file_errno(text: str) -> str:
+    """Preserve errno for invalid mmap inputs and unexpected fixed-address results."""
+    for original, patched in (ANDROID_MAP_FILE_ERRNO_PATCH, ANDROID_MAP_FILE_MISMATCH_PATCH):
+        if patched in text:
+            continue
+        if text.count(original) != 1:
+            raise SystemExit("Expected one POSIX file-view mapping validation point; SDK may have changed")
+        text = text.replace(original, patched, 1)
+    return text
 
 
 def patch_android_chrono_header(text: str) -> str:
@@ -607,6 +688,7 @@ def main() -> None:
             raise SystemExit(f"Expected one Android memory initializer in {memory_source}")
         memory_text = memory_text.replace(original, patched, 1)
     memory_text = patch_android_memory_backend(memory_text)
+    memory_text = patch_android_map_file_errno(memory_text)
     if memory_text != memory_source.read_text(encoding="utf-8"):
         memory_source.write_text(memory_text, encoding="utf-8")
         print("Initialized ASharedMemory on demand and added errno diagnostics for guest-memory creation.")
@@ -617,14 +699,18 @@ def main() -> None:
     if not guest_memory_source.is_file():
         raise SystemExit(f"ReXGlue guest memory source not found: {guest_memory_source}")
     guest_memory_text = guest_memory_source.read_text(encoding="utf-8")
+    original_guest_memory_text = guest_memory_text
     original, patched = ANDROID_GUEST_MEMORY_ERROR_PATCH
     if patched not in guest_memory_text:
         if guest_memory_text.count(original) != 1:
             raise SystemExit(f"Expected one guest-memory backing-store failure message in {guest_memory_source}")
-        guest_memory_source.write_text(guest_memory_text.replace(original, patched, 1), encoding="utf-8")
-        print("Clarified the guest-memory initialization failure message.")
+        guest_memory_text = guest_memory_text.replace(original, patched, 1)
+    guest_memory_text = patch_android_guest_maps(guest_memory_text)
+    if guest_memory_text != original_guest_memory_text:
+        guest_memory_source.write_text(guest_memory_text, encoding="utf-8")
+        print("Added guest-memory mapping success/failure diagnostics.")
     else:
-        print("Guest-memory initialization failure message is already clarified.")
+        print("Guest-memory backing-store and mapping diagnostics are already applied.")
 
     chrono_header = args.sdk / "include/rex/chrono/chrono.h"
     chrono_text = chrono_header.read_text(encoding="utf-8")

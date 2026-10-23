@@ -56,14 +56,14 @@ Images are under `docs/ui/`; interpretation and limits are in `docs/testing/andr
 - Android's exported process diagnostics record a `SIGABRT` during teardown with `FORTIFY: pthread_mutex_lock called on a destroyed mutex`. Frames include `Presenter::RemoveUIDrawerFromUIThread` and `ReXApp::OnDestroy`. The teardown failure is distinct from the earlier memory error until a new trace proves otherwise.
 - The raw log export is stored outside this repository. Its paths and device-specific process data are not copied into GitHub.
 - ADB is currently disconnected. The last remembered wireless debugging endpoint refused a connection; no new APK has been installed in this resumed session.
-- The Android ARM64 C++ objects for the patched memory backend and guest-memory setup compile in the existing Termux CMake build tree. No APK was generated, and there is no app-process runtime evidence for this patch yet.
+- The Android ARM64 objects for the patched memory backend and guest-memory setup compile in the existing Termux CMake build tree. The patch logs backing-store errors and each failed `mmap` view (address, size, offset, flags, errno), and reports nine views on success. Six patcher unit checks pass. No APK was generated, and there is no app-process runtime evidence for this patch yet.
 - The ReXGlue patch script now reruns successfully against both a clean v0.10.0 worktree and the existing Termux cache with its earlier Android trace variants.
 - See [`s23-memory-init-investigation-2026-10-23.md`](performance/s23-memory-init-investigation-2026-10-23.md) for the source analysis and limits of the shell probes.
 
 ## Next steps when the user resumes testing
 
-1. Apply the guest-memory initialization/errno patch, then build and run a test package when device installation is authorized and ADB is available.
-2. Verify the backing object, each guest mapping, and successful return from `Runtime::Setup` in the new log before proceeding.
+1. Build and run a test package containing the guest-memory initialization/errno instrumentation when device installation is authorized and ADB is available.
+2. Verify backing-object creation, all nine guest mappings, and successful return from `Runtime::Setup` in the new log before proceeding.
 3. Investigate the presenter/mutex teardown crash independently if it still occurs.
 4. After Phase 1 passes, capture an FPS baseline and profile threads/fence waits; measure pipeline cache, thread affinity, swapchain image count, and native resolution one change at a time.
 5. Review I/O traces after gameplay reaches car selection to determine whether `.bik`, `nxeart`, or padding files are requested. No such runtime evidence exists yet.

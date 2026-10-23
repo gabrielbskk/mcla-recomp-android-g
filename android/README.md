@@ -25,7 +25,7 @@ Required files recognized by V8:
 - `xarchive_audlo.rpf`
 - `xarchive_music.rpf`
 
-The app checks copied/source sizes, calculates SHA-256 for `default.xex`, and records metadata in `.mcla_ready`. `.bik` videos are optional and excluded by default. There is no V8 gameplay evidence yet proving whether the game proceeds without them. The ISO picker explains that XGD images must be extracted on a computer before importing the resulting folder or ZIP.
+The app checks copied/source sizes, calculates SHA-256 for `default.xex`, and records metadata in `.mcla_ready`. `.bik` videos are optional and excluded by default. The later I/O-trace run continued after failing to open `intro720.bik`, and the user reported reaching car selection; other scenes and videos remain unverified. The ISO picker explains that XGD images must be extracted on a computer before importing the resulting folder or ZIP.
 
 **Free space:** allow room for the imported data and temporary `game.part`. If `game` already exists, it remains during import, so the required free space can exceed the final size of the game files. The check also reserves a safety margin. If an import is interrupted, read the app's status before manually removing any directory.
 
@@ -59,7 +59,7 @@ The I/O-trace test build logs file opens and reads. Its user-confirmed run reach
 
 The V8 test APK was built in Termux. The complete Gradle build is not supported there because the SDK's CMake and AAPT2 tools are x86-64. Use the manual ARM64 process: build `libmain.so`, `librexruntime.so`, and `librexgpu-xenos.so` with the Termux ARM64 Clang/CMake toolchain, replace those libraries in the compatible base APK, then align and sign it. Keep the Android SDK, build outputs, APKs, and signing key outside Git. Do not version APK/XAPK/OBB files, game data, GPU driver archives, or signing material.
 
-The native build uses `scripts/build_android.sh` with the Android-patched ReXGlue SDK and ARM64 tools. Setting `MCLA_ANDROID_IO_TRACE=ON` enables temporary file-open/read tracing. Tool paths and signing material must remain outside the repository.
+For the existing Termux cache, use `scripts/resume_android_termux_build.sh` with `MCLA_BUILD_DIR` and `REXGLUE_CODEGEN` set to the verified cache and host wrapper. It checks which checkout owns the cache and builds all three native libraries. The generic `scripts/build_android.sh` uses the NDK-host toolchain and must not be mistaken for the Termux procedure. See [manual build recovery](../docs/performance/termux-build-recovery-2026-10-23.md) for the commands and remaining reproducibility limits. Setting `MCLA_ANDROID_IO_TRACE=ON` enables temporary file-open/read tracing. Java changes must also be compiled to DEX before packaging; replacing only the native libraries does not include launcher changes.
 
 ## Launcher screenshots
 

@@ -2,6 +2,21 @@
 
 Updated 2026-10-23. **V8 is the primary Android reference** in this repository. Earlier builds are historical and must be labeled as such; do not mix their storage behavior with the V8 flow.
 
+## Later verified progress — 2026-10-23
+
+The subsequent I/O-trace APK passed guest-memory setup using
+`ASharedMemory_create` and mapped nine views. The user reported reaching car
+selection. The trace shows an unsuccessful request for `intro720.bik` followed
+by continued execution; no `nxeart` or `root_directory_padding.pad` request
+was observed in that capture. The memfd fallback and presented FPS remain
+unmeasured. See `android/README.md` for the scoped evidence.
+
+The newer five-preset, English launcher and draw-callback metrics source has
+now compiled as three native ARM64 libraries and updated Java/DEX. These
+artifacts have not been packaged or device-tested. See
+[manual build recovery](performance/termux-build-recovery-2026-10-23.md).
+The failure and disconnected-ADB notes below describe earlier observations.
+
 ## Project objective
 
 Continue the C++ recompilation of *Midnight Club: Los Angeles Complete Edition* for Android ARM64, focusing on private data import, a simple launcher/configuration screen, diagnostics, and performance work. This remains an experimental recomp, not a release-ready Android game.
@@ -49,7 +64,7 @@ The V8 launcher/import sources and ReXGlue patch script have been synchronized i
 
 Images are under `docs/ui/`; interpretation and limits are in `docs/testing/android-ui-last-two-observations-2026-10-23.md`. The second capture supports that the readiness validator passed at that time. It does not show which import action populated the files, replace a service completion log, or prove the game was launched.
 
-## Latest runtime stop state — 2026-10-23
+## Historical runtime stop state — earlier on 2026-10-23
 
 - The user launched the V8 test app. The S23 log confirms the system Vulkan driver initialized and a 1080x2340 swapchain was created.
 - The app then failed before `Runtime::LoadXexImage`: guest-memory backing-store creation failed and `Runtime::Setup` returned `C0000001`. No game files were opened in this run.
@@ -60,7 +75,7 @@ Images are under `docs/ui/`; interpretation and limits are in `docs/testing/andr
 - The ReXGlue patch script now reruns successfully against both a clean v0.10.0 worktree and the existing Termux cache with its earlier Android trace variants.
 - See [`s23-memory-init-investigation-2026-10-23.md`](performance/s23-memory-init-investigation-2026-10-23.md) for the source analysis and limits of the shell probes.
 
-## Next steps when the user resumes testing
+## Historical next steps from that failed run
 
 1. Build and run a test package containing the guest-memory initialization/errno instrumentation when device installation is authorized and ADB is available.
 2. Verify backing-object creation, all nine guest mappings, and successful return from `Runtime::Setup` in the new log before proceeding.

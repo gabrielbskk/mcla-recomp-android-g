@@ -56,7 +56,7 @@
 - [x] Count draw callbacks over monotonic one-second windows and show `DRAW FPS` plus mean frame time; keep guest tick rate separately labeled.
 - [x] Extend the opt-in worker CSV with p50/p95/p99/max, hitches over 50 ms, and schema-versioned filename.
 - [x] Run focused C++ metrics tests and the Android settings suite.
-- [ ] Compile native integration with the manual ARM64 build path; blocked because the installed NDK only contains an x86_64 host compiler, while this Termux is aarch64.
+- [x] Compile native integration with the manual ARM64 build path. The earlier toolchain blocker was incorrect: the existing Termux cache uses native Clang with the NDK sysroot. All three native libraries and the updated Java/DEX compiled; see the manual build recovery report.
 
 ### Task 4: Exportable diagnostics and final review
 

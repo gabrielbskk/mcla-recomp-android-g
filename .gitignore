@@ -7,6 +7,8 @@
 *.pe
 *.bin
 *.god
+nxeart
+root_directory_padding.pad
 /private/
 /game
 /extracted/
@@ -46,6 +48,8 @@ mcla-*.zip
 *.exe
 *.dll
 *.so
+*.dex
+*.class
 /third_party/
 /tools/
 /out/
@@ -53,6 +57,7 @@ mcla-*.zip
 *.logcat
 logcat*.txt
 diagnostics-*.txt
+performance*.csv
 tombstone*
 
 # The play shortcut scripts/make_pc.ps1 makes

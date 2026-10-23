@@ -25,6 +25,7 @@ fi
 
 python3 "$repo_root/scripts/patch_android_rexglue.py" --sdk "$REXSDK_DIR"
 "$cmake_bin" --preset android-arm64-release -S "$repo_root" \
+  -DREXGLUE_CODEGEN_EXECUTABLE="$REXGLUE_CODEGEN" \
   -DMCLA_ANDROID_IO_TRACE="${MCLA_ANDROID_IO_TRACE:-OFF}"
 export LD_LIBRARY_PATH="$host_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$REXGLUE_CODEGEN" codegen "$repo_root/mcla_manifest.toml"

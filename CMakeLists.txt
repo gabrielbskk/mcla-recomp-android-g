@@ -27,7 +27,10 @@ if(ANDROID)
     set_target_properties(adrenotools linkernsbypass PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
-include(generated/rexglue.cmake)
+include(cmake/HostCodegen.cmake)
+mcla_prepare_codegen_cmake("${CMAKE_CURRENT_SOURCE_DIR}/generated/rexglue.cmake"
+                          "${CMAKE_CURRENT_BINARY_DIR}/mcla-rexglue.cmake")
+include("${CMAKE_CURRENT_BINARY_DIR}/mcla-rexglue.cmake")
 if(ANDROID)
     include_directories("${REXSDK_DIR}/thirdparty/libucontext/include"
                         "${REXSDK_DIR}/thirdparty/imgui"

@@ -31,7 +31,7 @@ Recorded app identity: `org.mcla.recomp`, `0.1.2-experimental`, `versionCode 3`,
 7. The ISO picker is present, but Xbox 360 XGD ISO extraction is not implemented. Extract it on a computer and import the resulting folder or ZIP.
 8. Runtime logs stay private and are exported with **Export logs** using a user-selected SAF folder, such as `Documents/MCLA/logs`.
 
-The V8 launcher/import sources have been synchronized into this repository. This replaces earlier Java code and docs that searched shared `/storage/emulated/0/MLR` and requested broad file access. The newer performance-related C++ source from the main snapshot was retained; its Android `OnConfigurePaths` now selects SDL's internal app storage `game` directory and configures private rotating logs.
+The V8 launcher/import sources and ReXGlue patch script have been synchronized into this repository. The patch script supplies the I/O open/read trace, asynchronous logging, and Android pipeline behavior used by the V8 diagnostic build. This replaces earlier Java code and docs that searched shared `/storage/emulated/0/MLR` and requested broad file access. The newer performance-related C++ source from the main snapshot was retained; its Android `OnConfigurePaths` now selects SDL's internal app storage `game` directory and configures private rotating logs.
 
 ## V8 build and artifacts
 

@@ -6,21 +6,22 @@ Purpose: continue the MCLA C++ recomp Android ARM64 work from the latest
 organized netbook source branch.
 
 Included:
-- Current source snapshot from netbook branch s23-native-build-2026-10-22
-  (tip 15e81b0). The new repository starts with a clean baseline commit rather
-  than copying historical objects that could contain removed private files.
-- Android app scaffold, data bootstrap/import UI, touch controls, graphics
-  settings, diagnostics, performance instrumentation and build/package scripts.
-- Existing project documentation and the Android/S23 build findings that are
-  already tracked in the source tree.
-- This file, which records what was selected for GitHub.
+- C++ ARM64 recomp source snapshot from the organized netbook Android branch.
+- Android V8 launcher and data-import source: SAF ZIP/folder selection,
+  app-private `filesDir/game` preparation, progress service, validation and
+  user-triggered diagnostics export.
+- Graphics settings, touch controls, runtime diagnostics and build/package
+  scripts from the source snapshot.
+- V8 build notes, the two latest launcher-only screenshots, and a continuity
+  summary that distinguishes current V8 evidence from earlier builds.
+- This file, which records the intended private-repository contents.
 
 Not included:
 - Signing keystores, passwords, API tokens, SSH keys or other credentials.
 - Original game files or extracted game data (XEX, RPF, ISO, OBB, ZIP, videos).
 - APK, XAPK, OBB, build outputs, GPU driver archives or raw device logs.
-- Original game screenshots/artwork in docs/images (kept on the netbook; README
-  references to those files were removed).
+- Gameplay screenshots/artwork and personal device screenshots. The only images
+  included are two recent app-launcher UI captures with no game content.
 - Local absolute paths and network/ADB credentials.
 
 The signing keystore was moved to an owner-only local folder on the netbook,
@@ -28,10 +29,14 @@ outside the source tree. Original game files, build artifacts and raw diagnostic
 logs remain in their existing netbook archive folders and are not staged here.
 
 Status at selection:
-- This is experimental Android ARM64 recomp source, not a stable release.
-- The netbook records a signed v8 APK build, but the ZIP import and full runtime
-  path through car selection were still pending confirmation.
+- The V8 UI screenshot reports that its private-data readiness validator
+  passed; the screenshot does not prove which import action populated the data.
+- The user requested that the game not be opened during the latest review. The
+  v8 runtime path through car selection and per-file runtime evidence remain
+  unverified.
 - There is no verified 30 FPS result; do not claim a measured performance gain.
+- Older `/MLR`, broad-storage and OBB/XAPK behavior is historical and must not
+  be presented as the V8 import flow. The V8 guide is `android/README.md`.
 - A private repository protects the source from public visibility, but does
   not make game files or signing credentials appropriate to commit.
 

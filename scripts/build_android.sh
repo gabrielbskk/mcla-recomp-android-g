@@ -23,7 +23,9 @@ if [[ ! -f "$REXSDK_DIR/CMakeLists.txt" ]]; then
   exit 2
 fi
 
-"$cmake_bin" --preset android-arm64-release -S "$repo_root"
+python3 "$repo_root/scripts/patch_android_rexglue.py" --sdk "$REXSDK_DIR"
+"$cmake_bin" --preset android-arm64-release -S "$repo_root" \
+  -DMCLA_ANDROID_IO_TRACE="${MCLA_ANDROID_IO_TRACE:-OFF}"
 export LD_LIBRARY_PATH="$host_lib_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$REXGLUE_CODEGEN" codegen "$repo_root/mcla_manifest.toml"
 "$cmake_bin" --build --preset android-arm64-release --target mcla --parallel "$jobs"

@@ -324,16 +324,17 @@ void MclaRequestFpsCounter(bool visible) {
 // it, in the repository a few folders up, and load the Xenos GPU plugin.
 void MclaApp::OnConfigurePaths(rex::PathConfig& paths) {
 #if defined(__ANDROID__)
-  // The POSIX default derives ~/.local/share from HOME, which Android sets to
-  // an unwritable /data. Keep user state, shader caches, and settings private
-  // to the app so they remain writable without broad storage access.
+  // Game assets, settings, shader caches, and logs stay in app-private storage.
+  // SAF grants are used only by the Java import/export UI.
   if (const char* internal_storage = SDL_GetAndroidInternalStoragePath();
       internal_storage && *internal_storage) {
-    const std::filesystem::path app_data =
-        std::filesystem::path(internal_storage) / "mcla-recomp";
+    const std::filesystem::path app_files = internal_storage;
+    const std::filesystem::path app_data = app_files / "mcla-recomp";
+    paths.game_data_root = app_files / "game";
     paths.user_data_root = app_data / "userdata";
     paths.cache_root = app_data / "cache";
     paths.config_path = paths.user_data_root / "mcla.toml";
+
     std::error_code create_error;
     std::filesystem::create_directories(paths.user_data_root, create_error);
     if (create_error) {
@@ -345,36 +346,30 @@ void MclaApp::OnConfigurePaths(rex::PathConfig& paths) {
       if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";
       g_android_path_diagnostics += "cache setup failed: " + create_error.message();
     }
+    create_error.clear();
+    const auto log_dir = app_data / "logs";
+    std::filesystem::create_directories(log_dir, create_error);
+    if (create_error) {
+      if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";
+      g_android_path_diagnostics += "private log setup failed: " + create_error.message();
+    } else {
+      const auto log_file = log_dir / "mcla.log";
+      if (!rex::cvar::SetFlagByName("log_file", log_file.string())) {
+        if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";
+        g_android_path_diagnostics += "could not set private log path";
+      }
+      rex::cvar::SetFlagByName("log_max_file_size_mb", "10");
+      rex::cvar::SetFlagByName("log_max_files", "3");
+      rex::cvar::SetFlagByName("log_flush_interval", "2");
+    }
     g_android_settings_path = paths.config_path.string();
     g_mcla_settings_path = g_android_settings_path.c_str();
-  }
-#endif
-  if (!paths.game_data_root.empty()) {
-    return;
-  }
-#if defined(__ANDROID__)
-  auto is_complete_game = [](const std::filesystem::path& candidate) {
-    std::error_code error;
-    for (const char* file : {"default.xex", "xarchive_cache.rpf", "xarchive_audio.rpf",
-                            "xarchive_audlo.rpf", "xarchive_music.rpf"}) {
-      error.clear();
-      if (!std::filesystem::is_regular_file(candidate / file, error) || error) return false;
-    }
-    return true;
-  };
-  const std::filesystem::path shared_root = "/storage/emulated/0";
-  const std::filesystem::path preferred_mlr = shared_root / "MLR";
-  for (const auto& candidate : {preferred_mlr, preferred_mlr / "game"}) {
-    const bool complete_game = is_complete_game(candidate);
     if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";
-    g_android_path_diagnostics += "MLR candidate [" + candidate.string() + " complete=" +
-                                  (complete_game ? "yes" : "no") + "]";
-    if (complete_game) {
-      paths.game_data_root = candidate;
-      return;
-    }
+    g_android_path_diagnostics += "game data root=" + paths.game_data_root.string();
+  } else {
+    g_android_path_diagnostics = "SDL did not provide Android internal app storage";
   }
-#endif
+#else
   std::filesystem::path folder = rex::filesystem::GetExecutableFolder();
   for (int level = 0; level < 5 && !folder.empty(); ++level) {
     std::error_code error;
@@ -386,48 +381,6 @@ void MclaApp::OnConfigurePaths(rex::PathConfig& paths) {
       break;
     }
     folder = folder.parent_path();
-  }
-#if defined(__ANDROID__)
-  // Fallback to app-owned storage, then scan shared storage if the user granted access.
-  if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";
-  g_android_path_diagnostics += "Android game candidates:";
-  const char* storage_roots[] = {
-      SDL_GetAndroidExternalStoragePath(),
-      SDL_GetAndroidInternalStoragePath(),
-      "/storage/emulated/0/Android/data/org.mcla.recomp/files",
-  };
-  for (const char* root : storage_roots) {
-    if (!paths.game_data_root.empty()) break;
-    if (!root) {
-      g_android_path_diagnostics += " <null>";
-      continue;
-    }
-    const std::filesystem::path game_root = std::filesystem::path(root) / "game";
-    const bool complete_game = is_complete_game(game_root);
-    g_android_path_diagnostics += " [" + game_root.string() + " complete=" +
-                                  (complete_game ? "yes" : "no") + "]";
-    if (complete_game) {
-      paths.game_data_root = game_root;
-    }
-  }
-  if (paths.game_data_root.empty()) {
-    if (is_complete_game(shared_root)) {
-      paths.game_data_root = shared_root;
-    } else {
-      std::error_code scan_error;
-      for (std::filesystem::directory_iterator it(shared_root, scan_error), end;
-           !scan_error && it != end; it.increment(scan_error)) {
-        std::error_code entry_error;
-        if (!it->is_directory(entry_error) || entry_error) continue;
-        const auto candidate = it->path();
-        if (is_complete_game(candidate)) {
-          g_android_path_diagnostics += " selected=" + candidate.string();
-          paths.game_data_root = candidate;
-          break;
-        }
-      }
-      if (scan_error) g_android_path_diagnostics += " storage_scan_error=" + scan_error.message();
-    }
   }
 #endif
 }

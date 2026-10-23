@@ -7,6 +7,7 @@ project(mcla LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+option(MCLA_ANDROID_IO_TRACE "Log Android runtime file opens and bytes read (temporary diagnostics)" OFF)
 
 # Android Gradle currently configures native Release as RelWithDebInfo, which
 # defaults to -O2. Keep the useful symbol information while optimizing the
@@ -74,6 +75,10 @@ if(ANDROID AND TARGET mcla_recomp)
     # Recompiled guest code is an OBJECT library linked into libmain.so; make
     # its generated PPC objects position-independent for Android shared loading.
     set_target_properties(mcla_recomp PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
+if(ANDROID AND MCLA_ANDROID_IO_TRACE AND TARGET rexruntime)
+    target_compile_definitions(rexruntime PRIVATE MCLA_ANDROID_IO_TRACE=1)
 endif()
 
 if(WIN32)

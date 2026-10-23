@@ -2,6 +2,11 @@ plugins {
     id 'com.android.application'
 }
 
+dependencies {
+    // Streaming ZIP64 import for large archives without staging a second archive copy.
+    implementation 'org.apache.commons:commons-compress:1.28.0'
+}
+
 def repoRoot = project.file('../..').canonicalFile
 def rexSdkPath = providers.gradleProperty('REXSDK_DIR')
     .orElse(providers.environmentVariable('REXSDK_DIR')).getOrNull()
@@ -15,6 +20,7 @@ if (!new File(rexSdk, 'CMakeLists.txt').isFile()) {
 def codegenPath = providers.environmentVariable('REXGLUE_CODEGEN').getOrNull()
 def codegenLibPath = providers.environmentVariable('REXGLUE_HOST_LIB_DIR').getOrNull()
 def pythonExecutable = providers.gradleProperty('PYTHON_EXECUTABLE').orElse(providers.environmentVariable('PYTHON_EXECUTABLE')).getOrNull()
+def androidIoTrace = providers.gradleProperty('MCLA_ANDROID_IO_TRACE').getOrElse('OFF')
 def releaseStoreFile = providers.gradleProperty("MCLA_RELEASE_STORE_FILE")
     .orElse(providers.environmentVariable("MCLA_RELEASE_STORE_FILE")).getOrNull()
 def releaseStorePassword = providers.gradleProperty("MCLA_RELEASE_STORE_PASSWORD")
@@ -91,6 +97,7 @@ android {
             cmake {
                 arguments '-DANDROID_PLATFORM=android-26',
                     '-DANDROID_STL=c++_shared',
+                    "-DMCLA_ANDROID_IO_TRACE=${androidIoTrace}",
                     '-DREXGLUE_ENABLE_TRACY=OFF',
                     "-DREXSDK_DIR=${rexSdk.absolutePath}",
                     '-DREXGLUE_USE_VULKAN=ON',

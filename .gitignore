@@ -38,9 +38,9 @@ keys.*
 # The play shortcut scripts/make_pc.ps1 makes
 *.lnk
 
-# Working notes and developer tools: kept on the maintainer's machine, not
-# published. The README is the public documentation.
+# Ad-hoc notes remain local; the maintained V8 continuity handoff is tracked.
 /docs/*.md
+!/docs/CONTINUITY_SUMMARY.md
 # Game screenshots and extracted artwork stay on the maintainer's netbook.
 /docs/images/
 /REFLECTION_FIX.md

@@ -1,118 +1,57 @@
-# Android ARM64 build (experimental)
+# Android ARM64 — V8 (primary reference)
 
-This repository contains an experimental Android target for the C++ MCLA Recomp project. It uses SDL3 and the ReXGlue runtime and targets `arm64-v8a`.
+This guide describes the V8 Android implementation (`0.1.2-experimental`, `versionCode 3`). The source reference is the snapshot recorded in `docs/performance/s23-build-v8-status-2026-10-22.md`, together with the launcher captures in `docs/ui/`.
 
 ## Current status
 
-- The APK builds and has been installed on a Samsung Galaxy S23 running Android 16.
-- The game found its data, initialized Vulkan on that device, and rendered the city scene.
-- Performance is still poor. This is a development build, not a stable release; no 30 FPS claim is made.
-- A tester reported that the app did not open on a Mali-G52 device; no device log was supplied, so the cause is unknown. Mali-G57 and other GPUs remain unverified.
-- The current Android build enables Vulkan only. The Android build script enables ReXGlue's fallback paths when a GPU lacks optional geometry-shader or non-solid-fill features. The SDK version used here does not provide an OpenGL ES fallback, so ARM64 installation compatibility is not the same as GPU compatibility.
-- Optional bundled drivers are selected automatically only for their matching GPU: Turnip for Adreno 740 and PanVK for Mali-G52. Other GPUs use Android's system Vulkan driver. PanVK remains experimental and has not yet been validated with MCLA.
+- V8 was built as an ARM64 (`arm64-v8a`) Release APK and installed on the Galaxy S23 SM-S911B running Android 16 on 2026-10-22. The signed APK and signing key are archived on the netbook and are not in this repository.
+- The V8 screen offers **Import ZIP**, **Import extracted folder**, an optional `.bik` video checkbox, **Export logs**, and an ISO picker. Xbox 360 XGD ISO images are not extracted by the app.
+- The latest launcher capture shows `Dados privados validados. Pronto para jogar.` with **Play** enabled. This confirms that the app's local readiness validator accepted the private files at capture time; it does not prove which import action supplied them.
+- At the user's request, the game was not opened during the latest review. Reaching car selection with V8, runtime file-open evidence, and V8 FPS remain unverified.
+- ADB responded during the review, but the queried Android user did not list `org.mcla.recomp` as installed at the end. No APK was installed or launched in this review.
+- Behavior from earlier Android builds is historical and must not be attributed to V8 without a direct comparison. See [the earlier runtime analysis](../docs/performance/s23-runtime-analysis-2026-10-22.md).
 
-## Game files
+## V8 import and storage
 
-The APK does **not** include the game. Provide your own legally obtained and extracted Xbox 360 game data, including `default.xex` and the required RPF archives.
+The user selects a ZIP through Android's Storage Access Framework (`ACTION_OPEN_DOCUMENT`) or an extracted folder through `ACTION_OPEN_DOCUMENT_TREE`. The app copies the files into its private `filesDir/game`; the native runtime reads that private copy. This flow does not require `MANAGE_EXTERNAL_STORAGE` or the shared `/storage/emulated/0/MLR` directory.
 
-Preferred location:
+`DataImportService` performs the copy in a foreground service with progress reporting, the `dataSync` service type, and a `WAKE_LOCK`. Files are prepared under `filesDir/game.part`, validated, then promoted to `game`. An existing previous copy is preserved as `game.previous` when applicable; it is not silently deleted. The import checks available space before writing.
 
-```text
-/storage/emulated/0/MLR/
-```
+Required files recognized by V8:
 
-Place the extracted game files directly in `MLR`, or put the game tree in `MLR/game`. The app checks these locations first. It also checks its app-specific storage as a fallback.
+- `default.xex`
+- `xarchive_cache.rpf`
+- `xarchive_audio.rpf`
+- `xarchive_audlo.rpf`
+- `xarchive_music.rpf`
 
-On Android 11 and newer, shared-storage scanning requires granting **Allow access to manage all files** in the Android settings page opened by the app. Return to the app after granting access; if it started before access was granted, close and reopen it. Keep the game files out of Git and do not distribute them with the APK.
+The app checks copied/source sizes, calculates SHA-256 for `default.xex`, and records metadata in `.mcla_ready`. `.bik` videos are optional and excluded by default. There is no V8 gameplay evidence yet proving whether the game proceeds without them. The ISO picker explains that XGD images must be extracted on a computer before importing the resulting folder or ZIP.
 
-## Full-data XAPK
+**Free space:** allow room for the imported data and temporary `game.part`. If `game` already exists, it remains during import, so the required free space can exceed the final size of the game files. The check also reserves a safety margin. If an import is interrupted, read the app's status before manually removing any directory.
 
-The Android launcher can read a full-data OBB named `main.<versionCode>.org.mcla.recomp.obb`. On first launch it extracts the OBB into the app-owned `Android/data/org.mcla.recomp/files/game` directory before starting the native runtime. This avoids requiring broad storage access for an XAPK install. Existing data in `/MLR` remains supported and still requires **Allow access to manage all files** on Android 11 and newer.
+Uninstalling the app removes imported files in `filesDir` and private saves. Back them up separately before uninstalling.
 
-To create a private XAPK from a signed APK and your own extracted game files, run:
+## Logs and diagnostics
 
-```bash
-python3 scripts/package_android_xapk.py \
-  --apk android/app/build/outputs/apk/release/app-release.apk \
-  --game-dir game \
-  --output MCLA-Recomp-Android.xapk
-```
+Runtime logs stay in the app-private directory and rotate. **Export logs** asks the user to choose a destination through SAF once; a destination such as `Documents/MCLA/logs` can be selected. This avoids broad storage permission. When available, the app also exports a report about the previous process exit.
 
-XAPK is a third-party ZIP container, not an Android install format. Use an XAPK installer that installs the APK and places the declared OBB in `Android/obb/org.mcla.recomp/`. The first launch then prepares the game files. The output contains the supplied game data; keep it private and do not upload it to this source repository.
+V8 contains temporary file-open/read tracing. Export and review the app's log before making claims about whether the runtime opened `.bik`, `nxeart`, or `root_directory_padding.pad`. No exported V8 gameplay trace has been reviewed yet.
 
-## In-game options
+## Build
 
-Open the game's pause menu, then **Settings**:
+The V8 APK was built manually in Termux with the ARM64 toolchain and Gradle. The build record is in `docs/performance/s23-build-v8-status-2026-10-22.md` and the detailed private build report is archived on the netbook. Do not put game data in Git or version APK/XAPK/OBB files, XEX/RPF files, GPU driver archives, or signing keys.
 
-- **Display** includes the FPS counter toggle, frame-rate target, motion blur and depth of field. On Android, the overlay separates UI render-loop FPS from guest game ticks per second; the latter is not a Vulkan-present count.
-- Android starts with a 960×540 guest video mode; **Display → Resolution** can select 540p, 720p or 1080p (restart required). The Android surface still fills the phone screen.
-- **Performance** includes Performance, Balanced and Original graphics presets, plus individual detail controls.
-- Changes are saved to the app's settings file.
+To reproduce a build, provide the compatible Android-patched ReXGlue SDK, host `rexglue` code generator, Android SDK/NDK, and Python locally. The native build uses `scripts/build_android.sh`; Gradle packaging uses `android/gradlew`. Setting `MCLA_ANDROID_IO_TRACE=ON` enables temporary file open/read tracing. Tool paths and signing material must remain outside the repository.
 
-## Touch controls
+## Launcher screenshots
 
-The Android game view includes an on-screen virtual gamepad: left stick for steering, RT/ LT for throttle and brake, A/B/X/Y, and START. The overlay hides after five seconds without touch. Touch the screen to reveal it again, or use the persistent PAD/HIDE button in the upper-right corner. Touch input is forwarded through SDL as a virtual gamepad, so the game uses the same input path as a physical controller.
+These captures show only the app launcher, with no gameplay or game assets:
 
-The Android native C++ targets use `-O3` for the `RelWithDebInfo` release configuration; Android Gradle selects that configuration for the current release variant. This may reduce CPU time, but FPS still needs to be measured on a device.
+- [Before data validation](../docs/ui/import-before-data-validation-2026-10-22.png)
+- [After the readiness validator enabled Play](../docs/ui/import-private-data-ready-2026-10-23.png)
 
-On the next launch, the launcher exports the previous runtime's rotating log files and an Android process-exit report (including the system trace when available) to `Documents/MCLA Recomp`. The report includes device model, Android version, app version, and the prior process exit reason. Export failures do not block startup.
-On Android, runtime logs also record a sample every 10 seconds: estimated UI render-loop FPS, p95 and maximum frame interval, and process VmRSS from `/proc/self/status`. This is an approximate render-loop metric, not a Vulkan-presented FPS measurement or Android PSS.
-The Android frame-timer hook also logs guest frame-tick rate, p95 and maximum tick interval every 10 seconds. It measures game-loop cadence, not successful Vulkan presents. ReXGlue's draw-call counter is not instrumented by its Vulkan backend, so it is not used as an Android measurement.
+See [the two-observation note](../docs/testing/android-ui-last-two-observations-2026-10-23.md) for their meaning and limits.
 
-The Android ReXGlue patch logs estimated Vulkan texture-cache allocation size, entry count, and soft/hard cache limits every 10 seconds. Compare it with VmRSS for context; VMA allocation size, process resident memory, and total GPU memory are different measurements.
+## Compatibility and performance
 
-Android Vulkan shader warm-up defaults to two background pipeline workers. When incomplete-frame skipping is enabled (the ReXGlue default), the Android build leaves queued pipeline compilation on those workers instead of draining and waiting for it at every GPU submission. Frames that use a placeholder are still skipped; this can trade temporary skipped frames during warm-up for less blocking of the emulation thread. Runtime gains still need to be measured on the S23.
-
-Android logs record individual Vulkan pipeline creations at debug level rather than info level. This avoids writing a high-volume line for every pipeline during shader warm-up; pipeline failures and aggregate performance samples remain visible at their existing levels.
-
-The Android guest video mode defaults to 540p to reduce pixel work, with the presenter scaling it to the phone display. This only helps if the game follows the Xbox video mode; it does not reduce CPU-side simulation or draw-call work. The current Android build uses bilinear scaling, so 540p may look softer than 720p. We still need an on-device frame-time comparison before claiming an FPS gain. ReXGlue's separate render-target scale remains 1x or higher.
-
-## Optional Vulkan drivers
-
-The app can bundle the supplied ARM64 Turnip and PanVK driver archives in one APK. It detects the renderer through a temporary EGL context, stages only the matching driver under app-private internal storage, and probes it with Vulkan before passing it to ReXGlue. If loading or the device probe fails, startup uses the Android system Vulkan driver. A marker left by an abnormal process exit makes the next launch use the system driver once.
-
-The two driver ZIPs are intentionally not stored in this repository. To build with them in the Codespace, copy the archives to its private filesystem and set both variables:
-
-```bash
-export MCLA_TURNIP_DRIVER_ZIP=/path/to/Turnip-v26.3.0-20261005-8G2-OneUI.zip
-export MCLA_PANVK_G52_DRIVER_ZIP=/path/to/PanVk-V7-0.0.2-alpha.zip
-./scripts/build_android_codespace.sh
-```
-
-The packaging script checks the pinned SHA-256 hashes, archive paths, metadata, ELF format, and ARM64 machine type before adding either archive to APK assets. Builds without both variables use the system Vulkan driver. Bundling either driver increases APK/install storage; PanVK's library expands to about 128 MB. `libadrenotools` and its linker hooks are included under their BSD-2-Clause license. The supplied Mesa driver archives do not contain license notices, so add the corresponding upstream notices before redistributing a build that bundles them.
-
-## Build requirements
-
-Use a Linux x86-64 build host with Java 21, Android SDK/NDK, CMake 3.31.6, Ninja, Python 3.12, and an Android-patched ReXGlue v0.10.0 SDK. The host-native `rexglue` code generator and its host libraries are also required.
-
-For the configured GitHub Codespace, run this from the repository root:
-
-```bash
-./scripts/build_android_codespace.sh
-```
-
-The script uses the Codespace Android SDK and local ReXGlue host code generator, and writes the APK under `android/app/build/outputs/apk/release/`. It does not install the APK on a connected phone. Release lint analysis is skipped by default because the current Codespaces Android lint metadata makes that task fail; set `MCLA_RUN_ANDROID_LINT=1` to include it.
-
-Set these environment variables to local tool paths:
-
-```bash
-export JAVA_HOME=/path/to/jdk-21
-export ANDROID_HOME=/path/to/android-sdk
-export REXSDK_DIR=/path/to/android-patched-rexglue-sdk
-export REXGLUE_CODEGEN=/path/to/linux-amd64/bin/rexglue
-export REXGLUE_HOST_LIB_DIR=/path/to/linux-amd64/lib
-export PYTHON_EXECUTABLE=/usr/bin/python3.12
-export CMAKE=/path/to/android-sdk/cmake/3.31.6/bin/cmake
-```
-
-Then build from the repository root:
-
-```bash
-./android/gradlew -p android :app:assembleRelease
-```
-
-The result is written to `android/app/build/outputs/apk/release/app-release.apk`. A local build may use the Android debug signing key when no custom signing variables are set; that key is for testing only. Never commit signing keys or passwords.
-
-## Repository hygiene
-
-Game dumps, generated game code, SDK contents, build outputs, logs, and signing keys are ignored by Git. Do not remove those ignore rules or commit those files.
+V8 was packaged for ARM64 and installed on the S23 during the build round. There is no V8 FPS measurement or verified 30 FPS result. Earlier builds showed very poor performance; those measurements belong to older versions and must not be extrapolated to V8. Mali G52/G57, Xclipse, and other GPUs have not been validated with this version.

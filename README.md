@@ -15,10 +15,21 @@ Static recompilation of *Midnight Club: Los Angeles Complete Edition* (Xbox 360,
 | Windows, Direct3D 12 | Plays: career, races, garage and upgrades, with audio and a controller, at 30 FPS by default. |
 | Windows, Vulkan | Reaches the title screen; not tested further. |
 | Linux, Vulkan | Builds and plays natively: free roam holds 30 FPS on an Intel Core Ultra 5 238V laptop (Mesa ANV). Tested by one user. |
-| Android ARM64 (experimental) | Builds and launches on one Samsung ARM64 device running Android 16, finds the game data, initializes Vulkan and renders the city. Performance is very poor; this is not a stable release, and other devices/GPUs are untested. |
+| Android ARM64 (experimental) | Earlier development builds reached the city scene on a Samsung Galaxy S23 (Android 16), with very poor performance. The latest v0.1.2 import flow has a screenshot showing the private-data validator enabled **Jogar**, but that build was not launched during the latest review. Runtime file-open evidence, current-build car selection, and FPS remain unverified. Other devices/GPUs are untested. |
 | PS5 (jailbroken) | Plays at a steady 30 FPS on a PS5 Pro (firmware 13.42); the zoomed-out map runs at 20 to 25. Also installed from scratch and played on a PS5 Slim (firmware 12.70). |
 
-For Android prerequisites, the `/storage/emulated/0/MLR` game-data folder, build steps, and current limitations, see [the Android guide](android/README.md). The APK contains no game data. Do not commit or distribute game files.
+For the current Android import flow, private game-data location, build steps, and limitations, see [the Android guide](android/README.md). The APK contains no game data. Do not commit or distribute game files.
+
+## Android launcher screenshots
+
+These are the two latest setup-screen captures retained for continuity. They document the import UI before validation and the later UI state after the app reported its private data as validated. The second image proves the launcher's readiness check passed at capture time; it does not prove which import action populated the files or that gameplay was launched.
+
+| Observation | Screenshot |
+|---|---|
+| Import screen; no game data reported ready (2026-10-22) | [Open image](docs/ui/import-before-data-validation-2026-10-22.png) |
+| App reported private data validated and enabled Jogar (2026-10-23) | [Open image](docs/ui/import-private-data-ready-2026-10-23.png) |
+
+See [the UI evidence note](docs/testing/android-ui-last-two-observations-2026-10-23.md) and [continuity summary](docs/CONTINUITY_SUMMARY.md) for what these captures do and do not establish.
 
 Car reflections are fixed on every renderer (cars no longer come out white with a glow at night).
 

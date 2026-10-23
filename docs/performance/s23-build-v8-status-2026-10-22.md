@@ -25,3 +25,19 @@ Do not treat this build as a stable release. Continue by importing the local
 game-data ZIP on-device, capturing the app's exported diagnostics, and recording
 the exact point reached. Keep the ZIP, APK, signing material, and raw logs on the
 netbook or device only; do not attach them to this repository.
+
+## Follow-up observation (2026-10-23)
+
+The later launcher capture at `docs/ui/import-private-data-ready-2026-10-23.png`
+shows `Dados privados validados. Pronto para jogar.` and an enabled **Jogar**
+button. The V8 launcher checks `filesDir/game` and enables the button only after
+`DataImportService.validateInstalledGame()` succeeds. This shows that the
+private files passed the launcher's readiness validator at capture time, but
+does not identify how they arrived or prove the import service's completion
+message. It does not prove that the native game opened any particular asset.
+
+The user then explicitly asked not to open the game. The latest ADB check found
+no installed `org.mcla.recomp` package in the queried Android user, with
+Termux in the foreground. No APK was installed and no gameplay test was run in
+the 2026-10-23 review. See `docs/testing/android-ui-last-two-observations-2026-10-23.md`
+and `docs/CONTINUITY_SUMMARY.md` for the current handoff.

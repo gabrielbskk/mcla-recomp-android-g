@@ -4,9 +4,9 @@
   "wikidata": "Q1514674",
   "system": "Xbox 360",
   "type": "recomp",
-  "project": "mcla-recomp",
-  "status": "released",
-  "targets": ["Windows", "PS5"],
+  "project": "mcla-recomp-android-g",
+  "status": "experimental",
+  "targets": ["Android ARM64"],
   "toolchain": "ReXGlue",
   "original": {"region": "USA, Europe", "revision": "Complete Edition"}
 }

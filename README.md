@@ -1,150 +1,45 @@
-# MCLA Recomp — Android ARM64 experimental fork
+# Midnight Club: Los Angeles Recomp — Android ARM64
 
-This private fork focuses on bringing the C++ MCLA recomp to Android ARM64. The desktop and PS5 material below describes the upstream project; Android support is still experimental.
+An experimental, community-made Android port of the Xbox 360 edition of *Midnight Club: Los Angeles Complete Edition*. This fork focuses on running the recompiled C++ game natively on Android ARM64, with development and testing centered on a Samsung Galaxy S23 using Termux.
 
-AI tools assisted with parts of this port because I am still learning the skills needed to do all of this independently. I apologize for relying on that help and ask for patience while the work is reviewed and tested.
+**This project is experimental.** Earlier builds reached the city on the S23 but had very low performance. The latest documented build has not been launched during the current review, and current gameplay stability, file-open coverage, and frame rate are unverified. Other devices and GPUs have not been validated. The README does not promise that the game is playable or that 30 FPS is attainable.
 
-Static recompilation of *Midnight Club: Los Angeles Complete Edition* (Xbox 360, title 545407F8) to native code, for Windows, Linux and jailbroken PS5 consoles.
+## Android setup and current status
 
-**This repository contains no game data, assets or signing keys.** You supply your own legally obtained copy; a script extracts what is needed on your machine, and the recompiled code is generated locally and never committed. What you build is for you, not for sharing.
+- [Android build, import flow, and requirements](android/README.md)
+- [V8 continuity and evidence summary](docs/CONTINUITY_SUMMARY.md)
+- [Latest launcher observations](docs/testing/android-ui-last-two-observations-2026-10-23.md)
+- [Screenshots](docs/ui/)
 
-## Status
+The launcher imports user-provided game files into the app's private `filesDir/game` directory. The runtime is configured to read from that private directory. The APK does not include the game or its assets. Uninstalling the app removes imported game data and saves stored in its private directory.
 
-| Target | State |
-|---|---|
-| Windows, Direct3D 12 | Plays: career, races, garage and upgrades, with audio and a controller, at 30 FPS by default. |
-| Windows, Vulkan | Reaches the title screen; not tested further. |
-| Linux, Vulkan | Builds and plays natively: free roam holds 30 FPS on an Intel Core Ultra 5 238V laptop (Mesa ANV). Tested by one user. |
-| Android ARM64 (experimental) | Earlier development builds reached the city scene on a Samsung Galaxy S23 (Android 16), with very poor performance. The latest v0.1.2 import flow has a screenshot showing the private-data validator enabled **Jogar**, but that build was not launched during the latest review. Runtime file-open evidence, current-build car selection, and FPS remain unverified. Other devices/GPUs are untested. |
-| PS5 (jailbroken) | Plays at a steady 30 FPS on a PS5 Pro (firmware 13.42); the zoomed-out map runs at 20 to 25. Also installed from scratch and played on a PS5 Slim (firmware 12.70). |
+## Building on Android
 
-For the current Android import flow, private game-data location, build steps, and limitations, see [the Android guide](android/README.md). The APK contains no game data. Do not commit or distribute game files.
+The current workflow builds the native ARM64 components on the Android device with Termux and packages them with the Android SDK/NDK and Java tooling. This avoids needing a separate build host, but a phone has less sustained CPU capacity, memory headroom, and cooling than a workstation. A full native build can therefore be slower, heat the device, and be more vulnerable to memory pressure or Android background process limits. Build tools and SDK components also consume substantial storage. The exact build requirements and commands are in the [Android guide](android/README.md).
 
-## Android launcher screenshots
+## What this project is
 
-These are the two latest setup-screen captures retained for continuity. They document the import UI before validation and the later UI state after the app reported its private data as validated. The second image proves the launcher's readiness check passed at capture time; it does not prove which import action populated the files or that gameplay was launched.
+ReXGlue statically recompiles Xbox 360 PowerPC code into C++, and supplies runtime components used by this project. This Android fork contains project-specific configuration, C++ changes, Android packaging and import code, and patches to ReXGlue. Recompilation does not make the game source or assets open source; users must supply their own legally obtained copy.
 
-| Observation | Screenshot |
-|---|---|
-| Import screen; no game data reported ready (2026-10-22) | [Open image](docs/ui/import-before-data-validation-2026-10-22.png) |
-| App reported private data validated and enabled Jogar (2026-10-23) | [Open image](docs/ui/import-private-data-ready-2026-10-23.png) |
+## Credits and references
 
-See [the UI evidence note](docs/testing/android-ui-last-two-observations-2026-10-23.md) and [continuity summary](docs/CONTINUITY_SUMMARY.md) for what these captures do and do not establish.
+- [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) — the recompilation toolkit and runtime used by this project. See its repository for its contributors and license.
+- [Xenia](https://github.com/xenia-project/xenia) — acknowledged by ReXGlue as foundational upstream work for parts of its runtime. It is a reference in the dependency lineage, not a claim that this Android fork contains a separate Xenia port.
+- [LARecomp](https://github.com/mzzvxm/LARecomp) — the source file comments identify specific menu, timing, performance-analysis, and warp-fix work adapted from LARecomp, with permission attributed there to its author. The affected files retain those attributions.
+- [libadrenotools](https://github.com/bylaws/libadrenotools) — included as a Git submodule for optional Android GPU-driver integration. Its presence does not mean a custom driver is required or enabled on every device; the app has a system-driver fallback.
 
-Car reflections are fixed on every renderer (cars no longer come out white with a glow at night).
+These credits describe references or components evidenced in this repository. They do not imply that this Android fork is a port of, or supported by, the Windows, Linux, or PS5 builds documented elsewhere in the former shared README. Archived platform notes, retained only as historical context, are in [OTHER_PLATFORMS_HISTORICAL.md](docs/OTHER_PLATFORMS_HISTORICAL.md).
 
-## Which release of the game
+## Copyright, game files, and trademarks
 
-Only **Midnight Club: Los Angeles Complete Edition, USA/Europe, for Xbox 360** (title id `545407F8`), as a disc image (`.iso`). The fixes in `config/` are addresses in that release's executable; another region or revision would need them checked again.
+This is an unofficial, non-commercial fan and research project. It is not affiliated with, endorsed by, or sponsored by Rockstar Games or Take-Two Interactive. *Midnight Club* and related game materials remain the property of their respective owners. No game executable, disc image, proprietary asset, save, APK, or signing key is distributed in this repository. Do not upload or share copyrighted game files; obtain and use game data only as permitted by applicable law and the rights holder. A disclaimer does not grant rights or guarantee that a hosting service will keep the project available.
 
-## How it works
+The project code is licensed under [GPL-3.0-or-later](LICENSE), except third-party components and material governed by their own licenses and notices. That code license does not cover the commercial game or its assets.
 
-The game's PowerPC code is translated to C++ ahead of time by the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) (BSD-3, derived from Xenia), which also provides the Xbox 360 kernel, GPU and audio reimplementation. This repository holds the project manifest, function hints, a small host application, patches to the SDK and the build scripts.
+## AI assistance and apology
 
-## Windows
+I apologize for relying heavily on AI assistance. My knowledge of C++ recompilation and Android porting is still limited, so I use AI as a helper for research, implementation, and review. That does not remove my responsibility for the changes: this project is heavily AI-assisted and can fairly be described as “vibecoded.” I am trying to do the best I can, and I ask for patience and clear corrections when something is wrong.
 
-You need Windows 10 or 11 (x86-64) with a Direct3D 12 graphics card, and about 20 GB of disk. In PowerShell:
+## Archived material
 
-```powershell
-git clone https://github.com/holdmysocks/mcla-recomp.git
-cd mcla-recomp
-.\scripts\make_pc.ps1 -Iso C:\path\to\your.iso
-```
-
-The script checks for Git, CMake, Ninja, Python 3, Visual Studio Build Tools 2022 (C++ workload) and the project's own Clang 20, and offers to install what is missing (answer `y`, or add `-InstallTools`); the Build Tools ask for administrator rights. It then clones and patches the ReXGlue SDK v0.10.0, builds it (the long step, once), extracts your game into `game\`, recompiles it and builds `out\build\win-amd64-release\mcla.exe`. Each step is skipped when its result is already there, so after a failure or an update you run the same command again. Logs are in `out\logs`.
-
-**Play:** double-click the **Midnight Club Los Angeles** shortcut the build leaves in the repository folder, or `mcla.exe` itself. Keep the folder where it was built; the game data is read from `game\`. An Xbox or PlayStation controller works.
-
-Options go after the program name, for example `mcla.exe --fullscreen=true --mcla_fps=60` (30, 60, 120, or 0 for uncapped). The pause menu has three extra entries: DISPLAY (frame-rate target, vsync, fullscreen, motion blur, depth of field), PERFORMANCE (detail options) and CONTROLS (button prompts, intro speed); changes are saved to `mcla.toml` next to `mcla.exe`.
-
-**Update:** `git pull`, then `.\scripts\make_pc.ps1` again.
-
-| If | Then |
-|---|---|
-| The SDK build fails with `'crtversion.h' file not found` | Another Clang on your path was used. Update and run `make_pc.ps1` again: it now uses only its own. |
-| Step 1 fails after downloading Clang, with `unable to run program "xz -d -qq"` | Windows 10's `tar.exe` cannot unpack `.tar.xz`. Update and run `make_pc.ps1` again: it now unpacks the archive with Python when `tar.exe` cannot. |
-| `codegen failed` | `game\default.xex` is missing or not the supported release; see the end of `out\codegen.log`. |
-| The game closes by itself | Start it with `--log_file=run.log --log_level=info` and open an issue with the end of that file. |
-
-## Linux
-
-Tested on Ubuntu 26.04. You need Clang 20 and LLD (`clang-20`, `clang++-20`, `lld-20`), CMake 3.25+, Ninja, Python 3, Git, a Vulkan 1.3 driver, and these packages (Debian/Ubuntu names): `libgtk-3-dev libx11-xcb-dev libxss-dev libvulkan-dev libwayland-dev libwayland-bin wayland-protocols libxkbcommon-dev libdecor-0-dev libasound2-dev libpulse-dev libpipewire-0.3-dev`. Linux 6.11 or newer is recommended.
-
-```bash
-git clone https://github.com/holdmysocks/mcla-recomp.git
-cd mcla-recomp
-git clone --recursive --branch v0.10.0 https://github.com/rexglue/rexglue-sdk.git third_party/rexglue-sdk
-cd third_party/rexglue-sdk
-git apply ../../patches/rexglue-v0.10.0-mcla.patch
-git apply ../../patches/rexglue-minmax-blend-factor.patch
-git -C thirdparty/FFmpeg apply ../../../../patches/rexglue-ffmpeg-ps5-config.patch
-git apply ../../patches/rexglue-linux-procmap-query.patch
-git apply ../../patches/rexglue-linux-wait-sleep.patch
-CC=clang-20 CXX=clang++-20 cmake --preset linux-amd64 -DREXGLUE_USE_VULKAN=ON -DREXGLUE_ENABLE_TRACY=OFF
-cmake --build out/build/linux-amd64 --config Release
-cmake --install out/build/linux-amd64 --config Release
-cd ../..
-python3 scripts/extract_game.py /path/to/your.iso
-SDK=$PWD/third_party/rexglue-sdk/out/install/linux-amd64
-"$SDK/bin/rexglue" codegen mcla_manifest.toml
-CC=clang-20 CXX=clang++-20 cmake --preset linux-amd64-release -DCMAKE_PREFIX_PATH="$SDK"
-cmake --build --preset linux-amd64-release
-./scripts/play_linux.sh
-```
-
-On Wayland, put `vulkan_allow_present_mode_immediate = false` and `vulkan_allow_present_mode_mailbox = false` in `out/build/linux-amd64-release/mcla.toml`; without them the game presents about 1,000 times a second and keeps the GPU busy.
-
-## PS5
-
-You need a jailbroken PS5 that runs homebrew, with an FTP server payload (port 2121 by default) and a homebrew mounter that shows folders under `/data/homebrew` on the home screen (ShadowMountPlus was used). The build runs on **Arch Linux as root**: on Windows, an Arch distribution under WSL2. Allow about 30 GB of disk, 16 GB of memory, and about 45 minutes the first time.
-
-On Windows, in PowerShell as administrator:
-
-```powershell
-wsl --install --no-distribution
-wsl --update
-wsl --install -d archlinux
-wsl -d archlinux -u root
-```
-
-Then, in that Linux shell (your Windows drives are under `/mnt`, so `C:\Games\mcla.iso` is `/mnt/c/Games/mcla.iso`):
-
-```bash
-pacman -Sy --noconfirm git
-cd /root
-git clone https://github.com/holdmysocks/mcla-recomp.git
-cd mcla-recomp
-bash ps5/make_ps5.sh --iso /mnt/c/path/to/your.iso --console 192.168.1.50
-```
-
-Use your console's address, and start the FTP payload first. Without `--console` it only builds and prints what to copy where. Keep the repository under `/root`, not `/mnt/c`. The script installs its packages, builds the PS5 toolchain and Vulkan driver ([mihawk-99/PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan)), patches and builds the SDK, extracts and recompiles your game, packages the title and uploads it. Each step is skipped when its result exists, so you run the same command again after a failure or an update (`git pull` first). Logs are in `/root/mcla/logs`.
-
-After the upload, let the mounter pick up `/data/homebrew/PPSA99779`; "Midnight Club: Los Angeles" appears on the home screen. On the console, `/data/mcla/game` holds the game data, `/data/mcla/mcla.toml` the settings and `/data/mcla/mcla-play.log` the log of the last start.
-
-**Your own tile and theme (optional).** No artwork or music ships here. `--tile IMAGE` takes any common image (for example the [official cover art](https://assets-prd.ignimgs.com/2022/04/17/midnightcomplete-1650239367276.jpg)); `--theme FILE.at9` takes an ATRAC9 file. For a theme, turn the audio down first (`ffmpeg -i in.m4a -af loudnorm=I=-28:TP=-2 -ar 48000 -ac 2 quiet.wav`), then convert it with [AT9-AT3 Converter](https://github.com/BMK-Studio/AT9-AT3_Converter/releases) (AT9, PS4, bitrate 72). The console keeps a title's tile and sound from when it was first registered.
-
-| If | Then |
-|---|---|
-| `this script needs Arch Linux` | Install Arch under WSL2 as above. |
-| `SDK patch does not apply` | Remove `/root/mcla/rexglue-sdk` and run again. |
-| `no FTP server at ...` | Start the FTP payload; check the address and `--ftp-port`. |
-| A bar with frame rate and temperatures over the game | That is your homebrew enabler's overlay (with OnionHEN, `[overlay] enabled=false` in `/data/OnionHEN/config.ini`). |
-| The game stops or closes | Fetch `/data/mcla/mcla-play.log` over FTP before starting it again and open an issue with it, your console model and firmware. |
-
-If you hand this to an AI agent: it needs your disc image's path and the console's address from you, must not look for or download a disc image, and writes to the console only with `--console`.
-
-## Missed functions
-
-If the game stops with `Call to invalid or unregistered function at guest address ...`, the recompiler missed a function that is only reached through a pointer. Please open an issue with that line; the fix is one entry in `config/runtime_discovered.toml`.
-
-## Credits
-
-- ReXGlue SDK by Tom Clay and contributors; Xenia by Ben Vanik and contributors.
-- [LARecomp](https://github.com/mzzvxm/LARecomp) by mzzvxm and contributors, whose fixes several parts of this project are ported from, with permission.
-- [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan) by mihawk-99 (GPL-3): the RADV port and toolchain the PS5 version is built on.
-- XenonRecomp by hedge-dev, on which ReXGlue's analysis builds.
-- The Linux build by [@MoonFuji](https://github.com/MoonFuji).
-
-## Licence
-
-GPL-3.0-or-later; see `LICENSE`. *Midnight Club* is a trademark of Take-Two Interactive. This project is not affiliated with or endorsed by Rockstar Games or Take-Two.
+The repository still contains some shared/upstream platform scripts and conditional code. Their presence is historical and does not indicate that this Android-focused fork currently builds, tests, or supports those targets. See [the archived platform notes](docs/OTHER_PLATFORMS_HISTORICAL.md).

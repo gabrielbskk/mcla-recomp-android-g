@@ -41,6 +41,7 @@ keys.*
 # Ad-hoc notes remain local; the maintained V8 continuity handoff is tracked.
 /docs/*.md
 !/docs/CONTINUITY_SUMMARY.md
+!/docs/OTHER_PLATFORMS_HISTORICAL.md
 # Game screenshots and extracted artwork stay on the maintainer's netbook.
 /docs/images/
 /REFLECTION_FIX.md

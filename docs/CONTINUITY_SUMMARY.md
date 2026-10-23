@@ -13,6 +13,7 @@ The project uses ReXGlue for static recompilation of PowerPC game code, with SDL
 - Continuity repository: [`gabrielbskk/mcla-recomp-android-g`](https://github.com/gabrielbskk/mcla-recomp-android-g), private, branch `main`.
 - Initial clean source import: commit `c23bd9a`.
 - V8 Android launcher/import Java sources were synchronized from the V8 build source snapshot for this update. The C++ Android game-data and log paths were aligned to that private-storage flow while retaining the newer performance-related C++ changes from the source snapshot.
+- Netbook working clone: `Cloud/01_MCLA_PROJETO/Codigo/mcla-recomp-android-g/`; local bare mirror: `Cloud/01_MCLA_PROJETO/Repositorios/mcla-recomp-android-g.git`; portable bundle backup: `Cloud/01_MCLA_PROJETO/Backups/Git/2026-10-23/`.
 - Push source/documentation changes only to this private repository. Do not push to the older public repository without new authorization.
 - Never commit original/extracted game data, XEX/RPF/ISO/BIK files, ZIP/XAPK/OBB, APKs, raw device logs, signing keys, passwords, tokens, SSH keys, saves, GPU-driver packages, or gameplay screenshots.
 - The two retained images show only the launcher UI and contain no gameplay or user files.

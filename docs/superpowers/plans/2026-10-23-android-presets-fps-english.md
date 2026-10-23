@@ -52,15 +52,17 @@
 
 **Files:** `src/mcla_app.cpp`, new `src/render_metrics.h`, new `tests/test_render_metrics.cpp`, `tests/test_android_settings.py`.
 
-- [ ] Add deterministic failing tests for draw-rate windows, percentiles, empty samples, and frames over 50 ms.
-- [ ] Count draw callbacks over monotonic one-second windows and show `DRAW FPS` plus mean frame time; keep guest tick rate separately labeled.
-- [ ] Extend the opt-in worker CSV with p50/p95/p99/max, hitches over 50 ms, and schema-versioned filename.
-- [ ] Run focused C++ metrics tests and the Android settings suite; compile native code with the repository's manual ARM64 build path when available.
+- [x] Add deterministic failing tests for draw-rate windows, percentiles, empty samples, and frames over 50 ms.
+- [x] Count draw callbacks over monotonic one-second windows and show `DRAW FPS` plus mean frame time; keep guest tick rate separately labeled.
+- [x] Extend the opt-in worker CSV with p50/p95/p99/max, hitches over 50 ms, and schema-versioned filename.
+- [x] Run focused C++ metrics tests and the Android settings suite.
+- [ ] Compile native integration with the manual ARM64 build path; blocked because the installed NDK only contains an x86_64 host compiler, while this Termux is aarch64.
 
 ### Task 4: Exportable diagnostics and final review
 
 **Files:** `android/app/src/main/java/org/mcla/recomp/DiagnosticsExporter.java`, `android/README.md`.
 
-- [ ] Include current and rotated `.csv` files in SAF exports and use content-derived stable names so repeat exports reuse identical documents.
-- [ ] Review diff, `.gitignore`, and generated artifacts; keep device logs and build outputs outside Git.
-- [ ] Record unavailable device measurements and do not claim FPS improvement without a fresh S23 capture.
+- [x] Include current and rotated `.csv` files in SAF exports and use content-derived stable names so repeat exports reuse identical documents.
+- [x] Review diff, `.gitignore`, and generated artifacts; keep device logs and build outputs outside Git.
+- [x] Record unavailable device measurements and do not claim FPS improvement without a fresh S23 capture.
+- [ ] Verify the SAF export flow on Android; host tests cover filename selection only.

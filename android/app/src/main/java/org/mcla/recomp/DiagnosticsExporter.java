@@ -46,7 +46,7 @@ final class DiagnosticsExporter {
         new Thread(() -> exportToTree(context.getApplicationContext(), destination), "mcla-previous-log-export").start();
     }
 
-    static String exportToTree(Context context, Uri treeUri) {
+    static synchronized String exportToTree(Context context, Uri treeUri) {
         try {
             List<File> logs = findLogs(context);
             Uri outputDirectory = resolveOutputDirectory(context, treeUri);
@@ -67,7 +67,7 @@ final class DiagnosticsExporter {
 
     private static List<File> findLogs(Context context) {
         File directory = new File(context.getFilesDir(), "mcla-recomp/logs");
-        File[] files = directory.listFiles(file -> file.isFile() && isLogArtifact(file.getName()));
+        File[] files = directory.listFiles(file -> file.isFile() && LogExportNaming.isLogArtifact(file.getName()));
         List<File> result = new ArrayList<>();
         if (files != null) result.addAll(java.util.Arrays.asList(files));
         result.sort(Comparator.comparingLong(File::lastModified));
@@ -75,22 +75,12 @@ final class DiagnosticsExporter {
         return result;
     }
 
-    private static boolean isLogArtifact(String name) {
-        return name.matches(".*\\.(log|csv)(\\.[0-9]+)?$");
-    }
-
     private static String exportName(File file) throws IOException {
-        String original = file.getName();
-        int extensionStart = original.lastIndexOf(".log");
-        String extension = ".log";
-        if (extensionStart < 0) {
-            extensionStart = original.lastIndexOf(".csv");
-            extension = ".csv";
+        try {
+            return LogExportNaming.stableExportName(file.getName(), sha256Prefix(file));
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("Unsupported log artifact name: " + file.getName(), exception);
         }
-        String stem = original.substring(0, extensionStart);
-        String rotation = original.substring(extensionStart + extension.length());
-        if (!rotation.isEmpty()) stem += "-" + rotation.substring(1);
-        return "log-" + stem + "-" + sha256Prefix(file) + extension;
     }
 
     private static String sha256Prefix(File file) throws IOException {

@@ -77,8 +77,9 @@ if(ANDROID AND TARGET mcla_recomp)
     set_target_properties(mcla_recomp PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
-if(ANDROID AND MCLA_ANDROID_IO_TRACE AND TARGET rexruntime)
-    target_compile_definitions(rexruntime PRIVATE MCLA_ANDROID_IO_TRACE=1)
+if(ANDROID AND MCLA_ANDROID_IO_TRACE)
+    include(cmake/AndroidIoTrace.cmake)
+    mcla_enable_android_io_trace()
 endif()
 
 if(WIN32)

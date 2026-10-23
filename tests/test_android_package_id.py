@@ -13,7 +13,7 @@ class AndroidPackageIdTest(unittest.TestCase):
         java_sources = list((ROOT / "android/app/src/main/java/org/mcla/recomp").rglob("*.java"))
 
         self.assertEqual(re.findall(r"applicationId\s+'([^']+)'", gradle),
-                         ["org.mcla.recomp.test"])
+                         ["org.mcla.recomp.openbeta"])
         self.assertIn("namespace 'org.libsdl.app'", gradle)
         self.assertIn('android:name="org.mcla.recomp.MclaActivity"', manifest)
         self.assertIn('android:name="org.mcla.recomp.DataSetupActivity"', manifest)

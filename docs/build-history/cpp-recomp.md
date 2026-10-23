@@ -1,37 +1,29 @@
-# First Android C++ recompilation
+# First Android C++ Recompilation
 
-**Date of recorded native build:** 2026-10-22
-
-**Status:** compile/link milestone; not by itself proof of a playable game.
+**Recorded build date:** 2026-10-22
+**Status:** compile/link milestone, not a stable or complete game release.
 
 ## Why the project changed direction
 
-The Rust Android prototype had been built and exercised, but its archived gameplay measurements were around 0.5–0.6 FPS and an earlier run had an input-dispatch ANR. The project then moved to a distinct C++ recompilation path. The old Rust prototype was preserved as historical material; it was not simply renamed or converted into this C++ codebase.
+An earlier Rust Android prototype compiled and ran but had extremely low reported rates and an input-dispatch ANR. The project then moved to a separate C++ static-recompilation path. The Rust prototype remains historical material; it was not converted into the current source tree.
 
-## How the recompilation works
+## How recompilation works
 
-1. The user supplies the Xbox 360 *Midnight Club: Los Angeles Complete Edition* executable (`default.xex`) and its game data. No game files are part of this repository.
-2. ReXGlue analyzes/recompiles the Xbox 360 PowerPC executable ahead of time into C++ translation units.
-3. Those C++ units and the ReXGlue runtime are built for Android `arm64-v8a` with the Android NDK/Termux toolchain.
-4. The Android package loads the native libraries. ReXGlue still supplies Xbox 360 runtime services, including Xenos GPU emulation; the host code is ARM64-native, but this does not mean every Xbox subsystem was rewritten as a native Android game engine.
+1. The user supplies a legally obtained Xbox 360 *Midnight Club: Los Angeles Complete Edition* executable (`default.xex`) and game data. No game files are included here.
+2. ReXGlue analyzes the Xbox 360 PowerPC executable and generates C++ translation units ahead of time.
+3. The generated units and ReXGlue runtime are built for Android `arm64-v8a`.
+4. ReXGlue provides Xbox 360 runtime services, including Xenos GPU emulation. ARM64-native host code does not mean the Xbox 360 subsystems have been rewritten as a native Android game engine.
 
-This is static recompilation plus a compatibility runtime, not x86 emulation and not a pure Android rewrite of the original game's engine.
+This is static recompilation plus a compatibility runtime, not x86 emulation or a full Android rewrite of the original engine.
 
 ## First native build record
 
-The 2026-10-22 Termux record reports successful compilation/linking of:
+The initial Termux build report recorded successful compilation and linking of `libmain.so` and the separate `librexgpu-xenos.so` plugin as Android ARM64 ELF files. That milestone did not include an APK installation or gameplay run, so it does not establish successful startup, import, car selection, or frame rate. See the [native build report](../performance/s23-native-build-2026-10-22.md) for the dated measurements and limitations.
 
-- `libmain.so`: 80,024,784 bytes (about 77 MiB), ELF64 AArch64 for Android.
-- `librexgpu-xenos.so`: 5,885,056 bytes (about 5.7 MiB), a separate ARM64 GPU plugin.
+## Android Open Beta
 
-The build used Android SDL/input/audio configuration and Vulkan. The CMake/PIC fixes allowed static dependencies and generated game code to be linked into Android shared libraries. The detailed [native build report](../performance/s23-native-build-2026-10-22.md) lists dependencies, hashes, and limitations.
+Archived source snapshots named `build_v1` through `build_v7` did not have trustworthy per-build APKs or individual runtime reports. They are grouped as source snapshots instead of being presented as seven verified releases.
 
-That first library milestone did not include an APK installation or a fresh gameplay run. It cannot be used to claim stable startup, successful import, car selection, or a frame rate.
+The Open Beta (`0.1.2-experimental`, `versionCode 3`, package `org.mcla.recomp.openbeta`) packages native ARM64 code and provides an Android launcher/import flow. Users choose a ZIP or extracted folder; the importer copies required files into app-private `filesDir/game`, validates them, and then enables **Play**.
 
-## Progress toward V8
-
-The netbook contains local source snapshots named `build_v1` through `build_v7`, followed by the V8 Android packaging/import snapshot. The reviewed v1–v7 directories did not provide per-build APKs or individual runtime reports, so the timeline groups them as source snapshots instead of inventing release-by-release results.
-
-V8 (`0.1.2-experimental`, `versionCode 3`) packages the native ARM64 code and adds an Android launcher/import flow. Users choose a ZIP or extracted folder; the importer copies required files into the app-private `filesDir/game` directory, validates them, and only then enables **Jogar**. V8 also carries file-open/read tracing for a later authorized gameplay test.
-
-The signed V8 APK exists and has been installed on the S23. The actual import and gameplay trace are tracked separately in the [V8 status record](../performance/s23-build-v8-status-2026-10-22.md) and the current netbook validation report. Do not infer that the game reached car selection from a successful compile or an enabled launcher button.
+A user test reached car selection. The maintainer reports severe stutter, gamepad input failure, and no clear visible change from preset/resolution settings. The draw-callback metric is not presented FPS. See the [current project status](../CONTINUITY_SUMMARY.md); do not infer stability or a frame-rate result from successful compilation or import validation.

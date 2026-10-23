@@ -412,6 +412,16 @@ def patch_android_memory_backend(text: str) -> str:
         raise SystemExit("Expected one Android file-mapping backend block; SDK may have changed")
     return text.replace(original, patched, 1)
 
+
+def patch_android_chrono_header(text: str) -> str:
+    """Apply or recognize the Android chrono shim, including an extended libc++ variant."""
+    original, patched = ANDROID_CHRONO_FALLBACK_PATCH
+    if patched in text or ANDROID_CHRONO_EXTENDED_LIBCPP_PATCH in text:
+        return text
+    if text.count(original) != 1:
+        raise SystemExit("Expected one C++20 clock-cast compatibility point; SDK may have changed")
+    return text.replace(original, patched, 1)
+
 TEXTURE_CACHE_MEMORY_SAMPLE = (
     "  if (destroyed_any) {\n"
     "    COUNT_profile_set(\"gpu/texture_cache/textures\", textures_.size());\n"
@@ -526,6 +536,23 @@ HOST_FILE_MAPPED_TRACE_PATCH = (
     "  return mapped;",
 )
 
+
+def patch_android_host_entry(text: str) -> str:
+    """Add I/O tracing while accepting the older result-bearing trace format."""
+    markers = (
+        "android io trace open path=",
+        "android io trace open_mapped path=",
+    )
+    for (original, patched), marker in zip(
+        (HOST_FILE_OPEN_TRACE_PATCH, HOST_FILE_MAPPED_TRACE_PATCH), markers
+    ):
+        if patched in text or marker in text:
+            continue
+        if text.count(original) != 1:
+            raise SystemExit("Expected one Android host-file I/O trace point; SDK may have changed")
+        text = text.replace(original, patched, 1)
+    return text
+
 HOST_FILE_READ_TRACE_PATCH = (
     "  if (file_handle_->Read(byte_offset, buffer.data(), buffer.size(), out_bytes_read)) {\n"
     "    return X_STATUS_SUCCESS;",
@@ -547,6 +574,11 @@ ANDROID_CHRONO_FALLBACK_PATCH = (
     "// Apple libc++ does not expose clock_time_conversion or clock_cast.",
     "#if defined(__APPLE__) || defined(__ANDROID__)\n"
     "// Apple and Android libc++ do not expose clock_time_conversion or clock_cast.",
+)
+
+ANDROID_CHRONO_EXTENDED_LIBCPP_PATCH = (
+    "#if defined(__APPLE__) || defined(__ANDROID__) || "
+    "(defined(__linux__) && defined(_LIBCPP_VERSION))"
 )
 
 
@@ -596,27 +628,19 @@ def main() -> None:
 
     chrono_header = args.sdk / "include/rex/chrono/chrono.h"
     chrono_text = chrono_header.read_text(encoding="utf-8")
-    original, patched = ANDROID_CHRONO_FALLBACK_PATCH
-    if patched not in chrono_text:
-        if chrono_text.count(original) != 1:
-            raise SystemExit(f"Expected one C++20 clock-cast compatibility point in {chrono_header}")
-        chrono_header.write_text(chrono_text.replace(original, patched, 1), encoding="utf-8")
+    patched_chrono_text = patch_android_chrono_header(chrono_text)
+    if patched_chrono_text != chrono_text:
+        chrono_header.write_text(patched_chrono_text, encoding="utf-8")
         print("Enabled ReXGlue's chrono compatibility shim for Android libc++.")
     else:
         print("Android libc++ chrono compatibility shim is already applied.")
 
     host_entry = args.sdk / "src/filesystem/devices/host_path_entry.cpp"
     host_entry_text = host_entry.read_text(encoding="utf-8")
-    entry_changed = False
-    for original, patched in (HOST_FILE_OPEN_TRACE_PATCH, HOST_FILE_MAPPED_TRACE_PATCH):
-        if patched in host_entry_text:
-            continue
-        if host_entry_text.count(original) != 1:
-            raise SystemExit(f"Expected one host-file I/O trace insertion point in {host_entry}")
-        host_entry_text = host_entry_text.replace(original, patched, 1)
-        entry_changed = True
+    patched_host_entry_text = patch_android_host_entry(host_entry_text)
+    entry_changed = patched_host_entry_text != host_entry_text
     if entry_changed:
-        host_entry.write_text(host_entry_text, encoding="utf-8")
+        host_entry.write_text(patched_host_entry_text, encoding="utf-8")
         print("Added Android host-file open and mapped-file trace records.")
     else:
         print("Android host-file open tracing is already applied.")
@@ -637,33 +661,6 @@ def main() -> None:
     else:
         print("Android host-file read tracing is already applied.")
     host_file.write_text(host_file_text, encoding="utf-8")
-
-    host_entry = args.sdk / "src/filesystem/devices/host_path_entry.cpp"
-    host_entry_text = host_entry.read_text(encoding="utf-8")
-    entry_changed = False
-    for original, patched in (HOST_FILE_OPEN_TRACE_PATCH, HOST_FILE_MAPPED_TRACE_PATCH):
-        if patched in host_entry_text:
-            continue
-        if host_entry_text.count(original) != 1:
-            raise SystemExit(f"Expected one host-file I/O trace insertion point in {host_entry}")
-        host_entry_text = host_entry_text.replace(original, patched, 1)
-        entry_changed = True
-    if entry_changed:
-        host_entry.write_text(host_entry_text, encoding="utf-8")
-        print("Added Android host-file open and mapped-file trace records.")
-    else:
-        print("Android host-file open tracing is already applied.")
-
-    host_file = args.sdk / "src/filesystem/devices/host_path_file.cpp"
-    host_file_text = host_file.read_text(encoding="utf-8")
-    original, patched = HOST_FILE_READ_TRACE_PATCH
-    if patched not in host_file_text:
-        if host_file_text.count(original) != 1:
-            raise SystemExit(f"Expected one host-file read trace insertion point in {host_file}")
-        host_file.write_text(host_file_text.replace(original, patched, 1), encoding="utf-8")
-        print("Added Android host-file byte-count trace records.")
-    else:
-        print("Android host-file read tracing is already applied.")
 
     pipeline_cache = args.sdk / "src/graphics/vulkan/pipeline_cache.cpp"
     if not pipeline_cache.is_file():

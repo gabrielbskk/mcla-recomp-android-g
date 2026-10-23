@@ -57,6 +57,7 @@ Images are under `docs/ui/`; interpretation and limits are in `docs/testing/andr
 - The raw log export is stored outside this repository. Its paths and device-specific process data are not copied into GitHub.
 - ADB is currently disconnected. The last remembered wireless debugging endpoint refused a connection; no new APK has been installed in this resumed session.
 - The Android ARM64 C++ objects for the patched memory backend and guest-memory setup compile in the existing Termux CMake build tree. No APK was generated, and there is no app-process runtime evidence for this patch yet.
+- The ReXGlue patch script now reruns successfully against both a clean v0.10.0 worktree and the existing Termux cache with its earlier Android trace variants.
 - See [`s23-memory-init-investigation-2026-10-23.md`](performance/s23-memory-init-investigation-2026-10-23.md) for the source analysis and limits of the shell probes.
 
 ## Next steps when the user resumes testing

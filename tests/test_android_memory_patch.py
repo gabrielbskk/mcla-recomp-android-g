@@ -53,6 +53,21 @@ class AndroidMemoryPatchTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             PATCHER.patch_android_memory_backend("#if REX_PLATFORM_ANDROID\n// changed SDK\n")
 
+    def test_android_chrono_patch_accepts_existing_extended_libcpp_variant(self):
+        source = (
+            "#if defined(__APPLE__) || defined(__ANDROID__) || "
+            "(defined(__linux__) && defined(_LIBCPP_VERSION))\n"
+            "// Apple, Android, and Linux libc++ do not expose clock_time_conversion.\n"
+        )
+        self.assertEqual(PATCHER.patch_android_chrono_header(source), source)
+
+    def test_android_host_trace_patch_recognizes_result_logging_variant(self):
+        source = (
+            'REXFS_INFO("android io trace open path=\'{}\' result={}");\n'
+            'REXFS_INFO("android io trace open_mapped path=\'{}\' offset={} bytes={} result={}");\n'
+        )
+        self.assertEqual(PATCHER.patch_android_host_entry(source), source)
+
 
 if __name__ == "__main__":
     unittest.main()

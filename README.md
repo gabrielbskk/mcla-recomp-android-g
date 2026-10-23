@@ -24,6 +24,7 @@ An experimental, community-made Android port of the Xbox 360 edition of *Midnigh
 |---|---|
 | [Android build and import guide](android/README.md) | Termux build steps, private data import, requirements, and limitations |
 | [V8 continuity summary](docs/CONTINUITY_SUMMARY.md) | Current implementation, what is verified, and what still needs device testing |
+| [Build history](docs/build-history/README.md) | Earlier Rust prototype, first C++ recompilation, and evidence by build stage |
 | [Launcher observations](docs/testing/android-ui-last-two-observations-2026-10-23.md) | What the two latest UI screenshots do and do not prove |
 | [Historical platform notes](docs/OTHER_PLATFORMS_HISTORICAL.md) | Archived Windows/Linux/PS5 documentation, not active support for this fork |
 

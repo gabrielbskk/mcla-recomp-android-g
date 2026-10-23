@@ -280,6 +280,138 @@ PIPELINE_CREATION_LOGS = (
     "  }",
 )
 
+ANDROID_MEMORY_BACKEND_PATCH = (
+    "#if REX_PLATFORM_ANDROID\n"
+    "  // TODO(Triang3l): Check if memfd can be used instead on API 30+.\n"
+    "  if (android_ASharedMemory_create_) {\n"
+    "    int sharedmem_fd = android_ASharedMemory_create_(path.c_str(), length);\n"
+    "    return sharedmem_fd >= 0 ? static_cast<FileMappingHandle>(sharedmem_fd)\n"
+    "                             : kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "\n"
+    "  // Use /dev/ashmem on API versions below 26, which added ASharedMemory.\n"
+    "  // /dev/ashmem was disabled on API 29 for apps targeting it.\n"
+    "  // https://chromium.googlesource.com/chromium/src/+/master/third_party/ashmem/ashmem-dev.c\n"
+    "  int ashmem_fd = open(\"/\" ASHMEM_NAME_DEF, O_RDWR);\n"
+    "  if (ashmem_fd < 0) {\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  char ashmem_name[ASHMEM_NAME_LEN];\n"
+    "  strlcpy(ashmem_name, path.c_str(), rex::countof(ashmem_name));\n"
+    "  if (ioctl(ashmem_fd, ASHMEM_SET_NAME, ashmem_name) < 0 ||\n"
+    "      ioctl(ashmem_fd, ASHMEM_SET_SIZE, length) < 0) {\n"
+    "    close(ashmem_fd);\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  return static_cast<FileMappingHandle>(ashmem_fd);\n"
+    "#else\n",
+    "#if REX_PLATFORM_ANDROID\n"
+    "  static std::once_flag android_memory_init_once;\n"
+    "  std::call_once(android_memory_init_once, AndroidInitialize);\n"
+    "  if (android_ASharedMemory_create_) {\n"
+    "    errno = 0;\n"
+    "    int sharedmem_fd = android_ASharedMemory_create_(path.c_str(), length);\n"
+    "    if (sharedmem_fd < 0) {\n"
+    "      const int error = errno;\n"
+    "      REXSYS_ERROR(\"ASharedMemory_create failed for {} ({} bytes): errno={} ({})\",\n"
+    "                   path.string(), length, error, std::strerror(error));\n"
+    "      return kFileMappingHandleInvalid;\n"
+    "    }\n"
+    "    REXSYS_INFO(\"Android guest memory backing store created: provider=ASharedMemory_create, \"\n"
+    "                \"name={}, bytes={}\", path.string(), length);\n"
+    "    return static_cast<FileMappingHandle>(sharedmem_fd);\n"
+    "  }\n"
+    "\n"
+    "  // Use /dev/ashmem only when the API 26+ shared-memory function is unavailable.\n"
+    "  errno = 0;\n"
+    "  int ashmem_fd = open(\"/\" ASHMEM_NAME_DEF, O_RDWR);\n"
+    "  if (ashmem_fd < 0) {\n"
+    "    const int error = errno;\n"
+    "    REXSYS_ERROR(\"open(/dev/ashmem) failed for {} ({} bytes): errno={} ({})\",\n"
+    "                 path.string(), length, error, std::strerror(error));\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  char ashmem_name[ASHMEM_NAME_LEN];\n"
+    "  strlcpy(ashmem_name, path.c_str(), rex::countof(ashmem_name));\n"
+    "  if (ioctl(ashmem_fd, ASHMEM_SET_NAME, ashmem_name) < 0) {\n"
+    "    const int error = errno;\n"
+    "    REXSYS_ERROR(\"ashmem ASHMEM_SET_NAME failed for {}: errno={} ({})\",\n"
+    "                 path.string(), error, std::strerror(error));\n"
+    "    close(ashmem_fd);\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  errno = 0;\n"
+    "  if (ioctl(ashmem_fd, ASHMEM_SET_SIZE, length) < 0) {\n"
+    "    const int error = errno;\n"
+    "    REXSYS_ERROR(\"ashmem ASHMEM_SET_SIZE failed for {} ({} bytes): errno={} ({})\",\n"
+    "                 path.string(), length, error, std::strerror(error));\n"
+    "    close(ashmem_fd);\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  REXSYS_INFO(\"Android guest memory backing store created: provider=ashmem, name={}, bytes={}\",\n"
+    "              path.string(), length);\n"
+    "  return static_cast<FileMappingHandle>(ashmem_fd);\n"
+    "#else\n",
+)
+
+ANDROID_MEMORY_INITIALIZER_PATCH = (
+    "void AndroidInitialize() {\n"
+    "  if (rex::GetAndroidApiLevel() >= 26) {\n"
+    "    libandroid_ = dlopen(\"libandroid.so\", RTLD_NOW);\n"
+    "    assert_not_null(libandroid_);\n"
+    "    if (libandroid_) {\n"
+    "      android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(\n"
+    "          dlsym(libandroid_, \"ASharedMemory_create\"));\n"
+    "      assert_not_null(android_ASharedMemory_create_);\n"
+    "    }\n"
+    "  }\n"
+    "}",
+    "void AndroidInitialize() {\n"
+    "  const int api_level = rex::GetAndroidApiLevel();\n"
+    "  if (api_level < 26) {\n"
+    "    REXSYS_WARN(\"ASharedMemory is unavailable on Android API {}; using ashmem fallback\",\n"
+    "                api_level);\n"
+    "    return;\n"
+    "  }\n"
+    "\n"
+    "  dlerror();\n"
+    "  libandroid_ = dlopen(\"libandroid.so\", RTLD_NOW);\n"
+    "  if (!libandroid_) {\n"
+    "    const char* error = dlerror();\n"
+    "    REXSYS_ERROR(\"dlopen(libandroid.so) failed: {}\", error ? error : \"unknown error\");\n"
+    "    return;\n"
+    "  }\n"
+    "\n"
+    "  dlerror();\n"
+    "  android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(\n"
+    "      dlsym(libandroid_, \"ASharedMemory_create\"));\n"
+    "  const char* error = dlerror();\n"
+    "  if (error || !android_ASharedMemory_create_) {\n"
+    "    REXSYS_ERROR(\"dlsym(ASharedMemory_create) failed: {}\",\n"
+    "                 error ? error : \"symbol not found\");\n"
+    "    android_ASharedMemory_create_ = nullptr;\n"
+    "    return;\n"
+    "  }\n"
+    "  REXSYS_INFO(\"Android shared-memory backend initialized: API {} via ASharedMemory_create\",\n"
+    "              api_level);\n"
+    "}",
+)
+
+ANDROID_GUEST_MEMORY_ERROR_PATCH = (
+    'REXSYS_ERROR("Unable to reserve the 4gb guest address space.");',
+    'REXSYS_ERROR("Unable to create guest-memory backing store ({} bytes).", mapping_size);',
+)
+
+
+def patch_android_memory_backend(text: str) -> str:
+    """Initialize Android shared memory lazily and report backing-store errors."""
+    original, patched = ANDROID_MEMORY_BACKEND_PATCH
+    if patched in text:
+        return text
+    if text.count(original) != 1:
+        raise SystemExit("Expected one Android file-mapping backend block; SDK may have changed")
+    return text.replace(original, patched, 1)
+
 TEXTURE_CACHE_MEMORY_SAMPLE = (
     "  if (destroyed_any) {\n"
     "    COUNT_profile_set(\"gpu/texture_cache/textures\", textures_.size());\n"
@@ -427,6 +559,40 @@ def main() -> None:
     source = args.sdk / "src/ui/vulkan/vulkan_device.cpp"
     if not source.is_file():
         raise SystemExit(f"ReXGlue Vulkan source not found: {source}")
+
+    memory_source = args.sdk / "src/core/memory_posix.cpp"
+    if not memory_source.is_file():
+        raise SystemExit(f"ReXGlue POSIX memory backend not found: {memory_source}")
+    memory_text = memory_source.read_text(encoding="utf-8")
+    if "#include <mutex>" not in memory_text:
+        include_anchor = "#include <sys/ioctl.h>\n"
+        if memory_text.count(include_anchor) != 1:
+            raise SystemExit(f"Expected one Android memory include point in {memory_source}")
+        memory_text = memory_text.replace(include_anchor, include_anchor + "#include <mutex>\n", 1)
+    original, patched = ANDROID_MEMORY_INITIALIZER_PATCH
+    if patched not in memory_text:
+        if memory_text.count(original) != 1:
+            raise SystemExit(f"Expected one Android memory initializer in {memory_source}")
+        memory_text = memory_text.replace(original, patched, 1)
+    memory_text = patch_android_memory_backend(memory_text)
+    if memory_text != memory_source.read_text(encoding="utf-8"):
+        memory_source.write_text(memory_text, encoding="utf-8")
+        print("Initialized ASharedMemory on demand and added errno diagnostics for guest-memory creation.")
+    else:
+        print("Android guest-memory initialization and diagnostics are already applied.")
+
+    guest_memory_source = args.sdk / "src/system/xmemory.cpp"
+    if not guest_memory_source.is_file():
+        raise SystemExit(f"ReXGlue guest memory source not found: {guest_memory_source}")
+    guest_memory_text = guest_memory_source.read_text(encoding="utf-8")
+    original, patched = ANDROID_GUEST_MEMORY_ERROR_PATCH
+    if patched not in guest_memory_text:
+        if guest_memory_text.count(original) != 1:
+            raise SystemExit(f"Expected one guest-memory backing-store failure message in {guest_memory_source}")
+        guest_memory_source.write_text(guest_memory_text.replace(original, patched, 1), encoding="utf-8")
+        print("Clarified the guest-memory initialization failure message.")
+    else:
+        print("Guest-memory initialization failure message is already clarified.")
 
     chrono_header = args.sdk / "include/rex/chrono/chrono.h"
     chrono_text = chrono_header.read_text(encoding="utf-8")

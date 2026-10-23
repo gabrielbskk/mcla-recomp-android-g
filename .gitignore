@@ -17,6 +17,22 @@
 # Keys
 *.key
 keys.*
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+.env
+.env.*
+!.env.example
+
+# Installable packages and user-owned game archives
+*.apk
+*.aab
+*.xapk
+*.obb
+game*.zip
+mcla-*.zip
 
 # Build output
 /build/
@@ -34,6 +50,10 @@ keys.*
 /tools/
 /out/
 *.log
+*.logcat
+logcat*.txt
+diagnostics-*.txt
+tombstone*
 
 # The play shortcut scripts/make_pc.ps1 makes
 *.lnk
@@ -65,3 +85,7 @@ keys.*
 /android/app/build/
 /android/app/.cxx/
 /android/app/src/main/assets/gpu_drivers/
+
+# Python test/runtime scratch files
+__pycache__/
+*.py[cod]

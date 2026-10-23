@@ -32,7 +32,7 @@ Recorded app identity: `org.mcla.recomp`, `0.1.2-experimental`, `versionCode 3`,
 7. The ISO picker is present, but Xbox 360 XGD ISO extraction is not implemented. Extract it on a computer and import the resulting folder or ZIP.
 8. Runtime logs stay private and are exported with **Export logs** using a user-selected SAF folder, such as `Documents/MCLA/logs`.
 
-The V8 launcher/import sources and ReXGlue patch script have been synchronized into this repository. The patch script supplies the I/O open/read trace, asynchronous logging, and Android pipeline behavior used by the V8 diagnostic build. This replaces earlier Java code and docs that searched shared `/storage/emulated/0/MLR` and requested broad file access. The newer performance-related C++ source from the main snapshot was retained; its Android `OnConfigurePaths` now selects SDL's internal app storage `game` directory and configures private rotating logs.
+The V8 launcher/import sources and ReXGlue patch script have been synchronized into this repository. The patch script supplies the I/O open/read trace, asynchronous logging, and Android pipeline behavior used by the V8 diagnostic build. This replaces earlier Java code and docs that searched a shared external game-data folder and requested broad file access. The newer performance-related C++ source from the main snapshot was retained; its Android `OnConfigurePaths` now selects SDL's internal app storage `game` directory and configures private rotating logs.
 
 ## V8 build and artifacts
 
@@ -49,27 +49,28 @@ The V8 launcher/import sources and ReXGlue patch script have been synchronized i
 
 Images are under `docs/ui/`; interpretation and limits are in `docs/testing/android-ui-last-two-observations-2026-10-23.md`. The second capture supports that the readiness validator passed at that time. It does not show which import action populated the files, replace a service completion log, or prove the game was launched.
 
-## Exact stop state
+## Latest runtime stop state — 2026-10-23
 
-- The user explicitly asked **not to open the game**. That was followed: do not tap **Play**, install an APK, or build an APK as part of this documentation pass.
-- ADB answered from the Samsung SM-S911B / Android 16. At the latest package query, `org.mcla.recomp` was not listed for the queried Android user and Termux was foregrounded. Do not confuse that current query with the earlier ready-screen capture.
-- The import ZIP was not found among the paths checked on the phone/netbook. The netbook retains original data and prior packages; do not overwrite or move originals.
-- A ready-screen capture exists, but no exported V8 I/O log was found proving that the user imported that ZIP through `DataImportService`.
-- No game-specific `FATAL EXCEPTION`, Vulkan error, or ANR can be assessed from this review because the package was not installed at the check and the game was not started. The captured logcat was system activity without a gameplay session and must not be used as V8 runtime proof.
+- The user launched the V8 test app. The S23 log confirms the system Vulkan driver initialized and a 1080x2340 swapchain was created.
+- The app then failed before `Runtime::LoadXexImage`: guest-memory backing-store creation failed and `Runtime::Setup` returned `C0000001`. No game files were opened in this run.
+- Android's exported process diagnostics record a `SIGABRT` during teardown with `FORTIFY: pthread_mutex_lock called on a destroyed mutex`. Frames include `Presenter::RemoveUIDrawerFromUIThread` and `ReXApp::OnDestroy`. The teardown failure is distinct from the earlier memory error until a new trace proves otherwise.
+- The raw log export is stored outside this repository. Its paths and device-specific process data are not copied into GitHub.
+- ADB is currently disconnected. The last remembered wireless debugging endpoint refused a connection; no new APK has been installed in this resumed session.
+- The Android ARM64 C++ objects for the patched memory backend and guest-memory setup compile in the existing Termux CMake build tree. No APK was generated, and there is no app-process runtime evidence for this patch yet.
+- See [`s23-memory-init-investigation-2026-10-23.md`](performance/s23-memory-init-investigation-2026-10-23.md) for the source analysis and limits of the shell probes.
 
 ## Next steps when the user resumes testing
 
-1. When asked, verify the correct V8 APK and signing state before any install. Do not uninstall another app or replace the current app without an explicit request.
-2. The user selects their ZIP/folder in the V8 launcher and confirms import completion. Do not open the game without a separate explicit instruction.
-3. Once gameplay testing is explicitly authorized, export app logs and test up to car selection. Review `android io trace open path=...` and `read ... bytes=...` lines to determine whether `.bik`, `nxeart`, or `root_directory_padding.pad` is opened.
-4. If authorized, record direct evidence for the game proceeding without `.bik`.
-5. Measure FPS/frame times, RAM/PSS, thermals, and load time in an authorized session. No V8 FPS gain or stable 30+ FPS claim is currently proven.
-6. Test Mali G52/G57 and other GPUs separately. An ARM64 APK installing is not proof of graphics compatibility.
-7. Keep build artifacts and originals in the netbook archive; push source only to the private GitHub repository after confirming privacy and reviewing the staged diff.
+1. Apply the guest-memory initialization/errno patch, then build and run a test package when device installation is authorized and ADB is available.
+2. Verify the backing object, each guest mapping, and successful return from `Runtime::Setup` in the new log before proceeding.
+3. Investigate the presenter/mutex teardown crash independently if it still occurs.
+4. After Phase 1 passes, capture an FPS baseline and profile threads/fence waits; measure pipeline cache, thread affinity, swapchain image count, and native resolution one change at a time.
+5. Review I/O traces after gameplay reaches car selection to determine whether `.bik`, `nxeart`, or padding files are requested. No such runtime evidence exists yet.
+6. Keep build artifacts and originals in the netbook archive; push source only to the private GitHub repository after confirming privacy and reviewing the staged diff.
 
 ## Earlier builds (historical; not V8 behavior)
 
-Older iterations used shared paths such as `/storage/emulated/0/MLR`, OBB/XAPK, or broad storage access. Those are not the V8 import flow. Earlier Android runs reached the city scene in at least one build but had very poor FPS; they do not establish V8 behavior. Existing old logs include estimates of guest tick/render rate and process RSS, not a reliable Vulkan-present FPS measure. See `docs/performance/s23-runtime-analysis-2026-10-22.md` as historical context only.
+Older iterations used shared external game-data folders, OBB/XAPK, or broad storage access. Those are not the V8 import flow. Earlier Android runs reached the city scene in at least one build but had very poor FPS; they do not establish V8 behavior. Existing old logs include estimates of guest tick/render rate and process RSS, not a reliable Vulkan-present FPS measure. See `docs/performance/s23-runtime-analysis-2026-10-22.md` as historical context only.
 
 ## Repository map
 

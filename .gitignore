@@ -8,7 +8,7 @@
 *.bin
 *.god
 /private/
-/game/
+/game
 /extracted/
 /dump/
 /generated/*

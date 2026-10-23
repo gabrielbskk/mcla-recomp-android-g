@@ -1,0 +1,1001 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9b3cdf5..48d1eac 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -158,6 +158,13 @@ if(WIN32)
+         message(FATAL_ERROR "Unsupported Windows architecture: ${REX_TARGET_PROCESSOR}")
+     endif()
+     add_compile_definitions(REX_PLATFORM_WINDOWS=1)
++elseif(ANDROID)
++    if(REX_TARGET_PROCESSOR MATCHES "aarch64|ARM64|arm64")
++        set(REX_PLATFORM "android-arm64")
++    else()
++        message(FATAL_ERROR "Unsupported Android architecture: ${REX_TARGET_PROCESSOR}")
++    endif()
++    add_compile_definitions(REX_PLATFORM_LINUX=1)
+ elseif(UNIX AND NOT APPLE)
+     if(REX_TARGET_PROCESSOR MATCHES "AMD64|x86_64")
+         set(REX_PLATFORM "linux-amd64")
+@@ -196,6 +203,7 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/rex_version.cmake)
+ rex_resolve_version(REXGLUE_FULL_VERSION
+     FLOOR_MAJOR ${PROJECT_VERSION_MAJOR}
+-    FLOOR_MINOR ${PROJECT_VERSION_MINOR})
++    FLOOR_MINOR ${PROJECT_VERSION_MINOR}
++    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
+ 
+ # Strip the -id trailer (if any) for the numeric-only version.
+ string(REGEX REPLACE "-.*$" "" REXGLUE_NUMERIC_VERSION "${REXGLUE_FULL_VERSION}")
+@@ -242,6 +250,10 @@ endif()
+ 
+ # Third-party dependencies (vendored sources only)
+ add_subdirectory(thirdparty)
++if(ANDROID)
++    add_subdirectory(thirdparty/libucontext)
++    include_directories(${REXGLUE_ROOT}/thirdparty/libucontext/include ${REXGLUE_ROOT}/thirdparty/libucontext/arch/aarch64/include)
++endif()
+ 
+ # Enable warnings after thirdparty
+ add_compile_options(
+diff --git a/include/rex/chrono/chrono.h b/include/rex/chrono/chrono.h
+index d876846..34e8e68 100644
+--- a/include/rex/chrono/chrono.h
++++ b/include/rex/chrono/chrono.h
+@@ -116,8 +116,8 @@ using XSystemClock = detail::NtSystemClock<detail::Domain::Guest>;
+ 
+ namespace std::chrono {
+ 
+-#ifdef __APPLE__
+-// Apple libc++ does not expose clock_time_conversion or clock_cast.
++#if defined(__APPLE__) || defined(__ANDROID__)
++// Apple and Android NDK libc++ do not expose clock_time_conversion or clock_cast.
+ template <class, class>
+ struct clock_time_conversion {};
+ 
+diff --git a/include/rex/main_android.h b/include/rex/main_android.h
+new file mode 100644
+index 0000000..3118caa
+--- /dev/null
++++ b/include/rex/main_android.h
+@@ -0,0 +1,5 @@
++#pragma once
++#include <android/api-level.h>
++namespace rex {
++inline int GetAndroidApiLevel() { return android_get_device_api_level(); }
++}
+diff --git a/include/rex/thread/fiber.h b/include/rex/thread/fiber.h
+index 352af67..7706dbe 100644
+--- a/include/rex/thread/fiber.h
++++ b/include/rex/thread/fiber.h
+@@ -20,7 +20,13 @@
+ // before including <ucontext.h>.
+ #define _XOPEN_SOURCE 700
+ #endif
++#if REX_PLATFORM_ANDROID
++#include <libucontext/libucontext.h>
++using rex_fiber_context_t = libucontext_ucontext_t;
++#else
+ #include <ucontext.h>
++using rex_fiber_context_t = ucontext_t;
++#endif
+ #include <cstdint>
+ #include <vector>
+ #endif
+@@ -57,7 +63,7 @@ struct Fiber {
+   void* handle_ = nullptr;
+   bool is_thread_fiber_ = false;
+ #elif REX_PLATFORM_LINUX || REX_PLATFORM_MAC
+-  ucontext_t context_{};
++  rex_fiber_context_t context_{};
+   std::vector<uint8_t> stack_;
+   void (*entry_)(void*) = nullptr;
+   void* arg_ = nullptr;
+diff --git a/include/rex/ui/surface_android.h b/include/rex/ui/surface_android.h
+new file mode 100644
+index 0000000..aec10f3
+--- /dev/null
++++ b/include/rex/ui/surface_android.h
+@@ -0,0 +1,19 @@
++#pragma once
++
++#include <android/native_window.h>
++#include <rex/ui/surface.h>
++
++namespace rex::ui {
++class AndroidNativeWindowSurface final : public Surface {
++ public:
++  explicit AndroidNativeWindowSurface(ANativeWindow* window) : window_(window) {}
++  TypeIndex GetType() const override { return kTypeIndex_AndroidNativeWindow; }
++  ANativeWindow* window() const { return window_; }
++
++ protected:
++  bool GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const override;
++
++ private:
++  ANativeWindow* window_;
++};
++}  // namespace rex::ui
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 1ddafd0..00b3218 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -100,8 +100,14 @@ target_include_directories(rexcore PRIVATE
+ 
+ if(APPLE)
+     target_link_libraries(rexcore PRIVATE pthread)
+-elseif(UNIX)
++elseif(UNIX AND NOT ANDROID)
+     target_link_libraries(rexcore PRIVATE pthread rt dl)
++elseif(ANDROID)
++    target_link_libraries(rexcore PRIVATE dl)
++endif()
++
++if(ANDROID)
++    target_link_libraries(rexcore PUBLIC rex_libucontext android)
+ endif()
+ 
+ target_link_libraries(rexcore
+diff --git a/src/core/fiber_posix.cpp b/src/core/fiber_posix.cpp
+index 4fe1ca6..b97d047 100644
+--- a/src/core/fiber_posix.cpp
++++ b/src/core/fiber_posix.cpp
+@@ -20,6 +20,11 @@
+ #if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
+ 
+ #include <rex/thread/fiber.h>
++#if REX_PLATFORM_ANDROID
++#define getcontext libucontext_getcontext
++#define makecontext libucontext_makecontext
++#define swapcontext libucontext_swapcontext
++#endif
+ 
+ #include <cassert>
+ 
+diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
+index b52bf39..53ea225 100644
+--- a/src/core/memory_posix.cpp
++++ b/src/core/memory_posix.cpp
+@@ -52,6 +52,7 @@
+ #include <sys/ioctl.h>
+ 
+ #include <linux/ashmem.h>
++#include <rex/main_android.h>
+ 
+ // TODO(tomc): Android or maybe na. idk
+ // #include "xenia/base/main_android.h"
+diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
+index 9ac8d15..ea0bf5b 100644
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -270,7 +270,7 @@ static sem_t* RexCreateAnonymousSemaphore() {
+ class PosixConditionBase {
+  public:
+   PosixConditionBase() {
+-#if REX_PLATFORM_LINUX
++#if REX_PLATFORM_LINUX && !REX_PLATFORM_ANDROID
+     // Use robust mutexes so waits can recover if owner thread terminates.
+     pthread_mutexattr_t attr;
+     if (pthread_mutexattr_init(&attr) == 0) {
+@@ -290,7 +290,7 @@ class PosixConditionBase {
+   WaitResult Wait(std::chrono::milliseconds timeout) {
+     bool executed;
+     auto predicate = [this] { return this->signaled(); };
+-#if REX_PLATFORM_LINUX
++#if REX_PLATFORM_LINUX && !REX_PLATFORM_ANDROID
+     auto native_mutex = static_cast<pthread_mutex_t*>(mutex_.native_handle());
+     int lock_result = pthread_mutex_lock(native_mutex);
+     if (lock_result == EOWNERDEAD) {
+@@ -344,7 +344,7 @@ class PosixConditionBase {
+       locks.reserve(handles.size());
+ 
+       for (size_t i = 0; i < handles.size(); ++i) {
+-#if REX_PLATFORM_LINUX
++#if REX_PLATFORM_LINUX && !REX_PLATFORM_ANDROID
+         auto native_mutex = static_cast<pthread_mutex_t*>(handles[i]->mutex_.native_handle());
+         int result = pthread_mutex_trylock(native_mutex);
+         if (result == 0 || result == EOWNERDEAD) {
+diff --git a/src/filesystem/CMakeLists.txt b/src/filesystem/CMakeLists.txt
+index 577e4c9..33388a1 100644
+--- a/src/filesystem/CMakeLists.txt
++++ b/src/filesystem/CMakeLists.txt
+@@ -28,6 +28,10 @@ rex_target_pch(rexfilesystem
+     <rex/system/xmemory.h>
+ )
+ 
++if(ANDROID)
++    target_sources(rexfilesystem PRIVATE android/android_content.cpp)
++    target_link_libraries(rexfilesystem PUBLIC SDL3::SDL3)
++endif()
+ target_link_libraries(rexfilesystem PUBLIC rexcore)
+ target_include_directories(rexfilesystem PUBLIC
+     $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
+diff --git a/src/filesystem/android/android_content.cpp b/src/filesystem/android/android_content.cpp
+new file mode 100644
+index 0000000..39ebe4a
+--- /dev/null
++++ b/src/filesystem/android/android_content.cpp
+@@ -0,0 +1,63 @@
++#include <rex/filesystem.h>
++
++#include <SDL3/SDL_system.h>
++#include <jni.h>
++
++#include <string>
++
++namespace rex::filesystem {
++
++void AndroidInitialize() {}
++void AndroidShutdown() {}
++
++bool IsAndroidContentUri(const std::string_view source) {
++  return source.starts_with("content://");
++}
++
++int OpenAndroidContentFileDescriptor(const std::string_view uri, const char* mode) {
++  auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
++  auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
++  if (!env || !activity || !mode) return -1;
++
++  int fd = -1;
++  jclass activity_class = env->GetObjectClass(activity);
++  jmethodID get_resolver = activity_class
++      ? env->GetMethodID(activity_class, "getContentResolver", "()Landroid/content/ContentResolver;")
++      : nullptr;
++  jobject resolver = get_resolver ? env->CallObjectMethod(activity, get_resolver) : nullptr;
++  jclass uri_class = env->FindClass("android/net/Uri");
++  jmethodID parse_uri = uri_class
++      ? env->GetStaticMethodID(uri_class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;")
++      : nullptr;
++  jstring uri_string = env->NewStringUTF(std::string(uri).c_str());
++  jobject android_uri = parse_uri && uri_string ? env->CallStaticObjectMethod(uri_class, parse_uri, uri_string) : nullptr;
++  jclass resolver_class = resolver ? env->GetObjectClass(resolver) : nullptr;
++  jmethodID open_fd = resolver_class
++      ? env->GetMethodID(resolver_class, "openFileDescriptor", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;")
++      : nullptr;
++  jstring mode_string = env->NewStringUTF(mode);
++  jobject descriptor = open_fd && android_uri && mode_string
++      ? env->CallObjectMethod(resolver, open_fd, android_uri, mode_string)
++      : nullptr;
++  jclass descriptor_class = descriptor ? env->GetObjectClass(descriptor) : nullptr;
++  jmethodID detach_fd = descriptor_class ? env->GetMethodID(descriptor_class, "detachFd", "()I") : nullptr;
++  if (detach_fd) fd = env->CallIntMethod(descriptor, detach_fd);
++  if (env->ExceptionCheck()) {
++    env->ExceptionClear();
++    fd = -1;
++  }
++
++  if (descriptor_class) env->DeleteLocalRef(descriptor_class);
++  if (descriptor) env->DeleteLocalRef(descriptor);
++  if (mode_string) env->DeleteLocalRef(mode_string);
++  if (resolver_class) env->DeleteLocalRef(resolver_class);
++  if (android_uri) env->DeleteLocalRef(android_uri);
++  if (uri_string) env->DeleteLocalRef(uri_string);
++  if (uri_class) env->DeleteLocalRef(uri_class);
++  if (resolver) env->DeleteLocalRef(resolver);
++  if (activity_class) env->DeleteLocalRef(activity_class);
++  env->DeleteLocalRef(activity);
++  return fd;
++}
++
++}  // namespace rex::filesystem
+diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
+index 5bd3dc5..0408921 100644
+--- a/src/ui/CMakeLists.txt
++++ b/src/ui/CMakeLists.txt
+@@ -68,6 +68,8 @@ if(WIN32)
+     set(REXUI_PLATFORM_SOURCES
+         surface_win.cpp
+     )
++elseif(ANDROID)
++    set(REXUI_PLATFORM_SOURCES surface_android.cpp)
+ elseif(APPLE)
+     set(REXUI_PLATFORM_SOURCES
+         surface_mac.cpp
+@@ -146,7 +148,7 @@ if(REXGLUE_USE_VULKAN)
+ endif()
+ 
+ # Platform-specific dependencies
+-if(UNIX AND NOT APPLE)
++if(UNIX AND NOT APPLE AND NOT ANDROID)
+     find_package(PkgConfig REQUIRED)
+     pkg_check_modules(X11_XCB REQUIRED x11-xcb)
+     # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
+diff --git a/src/ui/surface_android.cpp b/src/ui/surface_android.cpp
+new file mode 100644
+index 0000000..0891019
+--- /dev/null
++++ b/src/ui/surface_android.cpp
+@@ -0,0 +1,13 @@
++#include <rex/ui/surface_android.h>
++
++namespace rex::ui {
++bool AndroidNativeWindowSurface::GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const {
++  if (!window_) return false;
++  const int width = ANativeWindow_getWidth(window_);
++  const int height = ANativeWindow_getHeight(window_);
++  if (width <= 0 || height <= 0) return false;
++  width_out = static_cast<uint32_t>(width);
++  height_out = static_cast<uint32_t>(height);
++  return true;
++}
++}  // namespace rex::ui
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 2251429..92738aa 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -35,6 +35,8 @@
+ #include <SDL3/SDL_metal.h>
+ 
+ #include <rex/ui/surface_mac.h>
++#elif REX_PLATFORM_ANDROID
++#include <rex/ui/surface_android.h>
+ #else
+ #include <X11/Xlib-xcb.h>
+ #include <rex/ui/surface_gnulinux.h>
+@@ -398,6 +400,14 @@ std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl(Surface::TypeFlags allowed
+       SDL_Metal_DestroyView(metal_view);
+     }
+   }
++#elif REX_PLATFORM_ANDROID
++  SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
++  if (allowed_types & Surface::kTypeFlag_AndroidNativeWindow) {
++    auto* native_window = static_cast<ANativeWindow*>(SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
++    if (native_window) {
++      return std::make_unique<AndroidNativeWindowSurface>(native_window);
++    }
++  }
+ #else
+   SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
+   if (allowed_types & Surface::kTypeFlag_WaylandSurface) {
+diff --git a/thirdparty/libucontext/CMakeLists.txt b/thirdparty/libucontext/CMakeLists.txt
+new file mode 100644
+index 0000000..78dd1d1
+--- /dev/null
++++ b/thirdparty/libucontext/CMakeLists.txt
+@@ -0,0 +1,17 @@
++enable_language(ASM)
++add_library(rex_libucontext STATIC
++    arch/aarch64/getcontext.S
++    arch/aarch64/setcontext.S
++    arch/aarch64/swapcontext.S
++    arch/aarch64/makecontext.c
++    arch/aarch64/trampoline.c
++)
++target_include_directories(rex_libucontext PUBLIC
++    ${CMAKE_CURRENT_SOURCE_DIR}/include
++    ${CMAKE_CURRENT_SOURCE_DIR}/arch/aarch64/include
++)
++target_include_directories(rex_libucontext PRIVATE
++    ${CMAKE_CURRENT_SOURCE_DIR}/arch/aarch64
++    ${CMAKE_CURRENT_SOURCE_DIR}/arch/common
++)
++target_compile_definitions(rex_libucontext PRIVATE FREESTANDING)
+diff --git a/thirdparty/libucontext/LICENSE b/thirdparty/libucontext/LICENSE
+new file mode 100644
+index 0000000..9fbc5d3
+--- /dev/null
++++ b/thirdparty/libucontext/LICENSE
+@@ -0,0 +1,9 @@
++Copyright (c) 2018-2022 Ariadne Conill <ariadne@dereferenced.org>
++
++Permission to use, copy, modify, and/or distribute this software for any
++purpose with or without fee is hereby granted, provided that the above
++copyright notice and this permission notice appear in all copies.
++
++This software is provided 'as is' and without any warranty, express or
++implied.  In no event shall the authors be liable for any damages arising
++from the use of this software.
+diff --git a/thirdparty/libucontext/arch/aarch64/defs.h b/thirdparty/libucontext/arch/aarch64/defs.h
+new file mode 100644
+index 0000000..5398adc
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/defs.h
+@@ -0,0 +1,27 @@
++#ifndef __ARCH_AARCH64_DEFS_H
++#define __ARCH_AARCH64_DEFS_H
++
++#define REG_SZ		(8)
++#define MCONTEXT_GREGS	(184)
++
++#define R0_OFFSET	REG_OFFSET(0)
++
++#define SP_OFFSET	432
++#define PC_OFFSET	440
++#define PSTATE_OFFSET	448
++#define FPSIMD_CONTEXT_OFFSET 464
++
++#ifndef FPSIMD_MAGIC
++# define FPSIMD_MAGIC	0x46508001
++#endif
++
++#ifndef ESR_MAGIC
++# define ESR_MAGIC	0x45535201
++#endif
++
++#define FETCH_LINKPTR(dest) \
++	asm("mov	%0, x19" : "=r" ((dest)))
++
++#include "common-defs.h"
++
++#endif
+diff --git a/thirdparty/libucontext/arch/aarch64/getcontext.S b/thirdparty/libucontext/arch/aarch64/getcontext.S
+new file mode 100644
+index 0000000..5240728
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/getcontext.S
+@@ -0,0 +1,66 @@
++/*
++ * Copyright (c) 2018, 2020 Ariadne Conill <ariadne@dereferenced.org>
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * This software is provided 'as is' and without any warranty, express or
++ * implied.  In no event shall the authors be liable for any damages arising
++ * from the use of this software.
++ */
++
++#include "defs.h"
++
++ALIAS(getcontext, libucontext_getcontext)
++ALIAS(__getcontext, libucontext_getcontext)
++
++	.global PROC_NAME(libucontext_getcontext);
++	.align  2;
++	TYPE(libucontext_getcontext)
++	ENT(libucontext_getcontext)
++PROC_NAME(libucontext_getcontext):
++	str	xzr, [x0, #REG_OFFSET(0)]
++
++	/* save x2 and x3 for reuse */
++	stp	x2, x3,   [x0, #REG_OFFSET(2)]
++
++	/* save current program counter in link register */
++	str	x30, [x0, #PC_OFFSET]
++
++	/* save current stack pointer */
++	mov	x2, sp
++	str	x2, [x0, #SP_OFFSET]
++
++	/* save pstate */
++	str	xzr, [x0, #PSTATE_OFFSET]
++
++	add x2, x0, #FPSIMD_CONTEXT_OFFSET
++	stp q8, q9,   [x2, #144]
++	stp q10, q11, [x2, #176]
++	stp q12, q13, [x2, #208]
++	stp q14, q15, [x2, #240]
++
++	/* save GPRs and return value 0 */
++	mov	x2, x0
++	mov	x0, #0
++
++	stp	x0, x1,   [x2, #REG_OFFSET(0)]
++	/* x2 and x3 have already been saved */
++	stp	x4, x5,   [x2, #REG_OFFSET(4)]
++	stp	x6, x7,   [x2, #REG_OFFSET(6)]
++	stp	x8, x9,   [x2, #REG_OFFSET(8)]
++	stp	x10, x11, [x2, #REG_OFFSET(10)]
++	stp	x12, x13, [x2, #REG_OFFSET(12)]
++	stp	x14, x15, [x2, #REG_OFFSET(14)]
++	stp	x16, x17, [x2, #REG_OFFSET(16)]
++	stp	x18, x19, [x2, #REG_OFFSET(18)]
++	stp	x20, x21, [x2, #REG_OFFSET(20)]
++	stp	x22, x23, [x2, #REG_OFFSET(22)]
++	stp	x24, x25, [x2, #REG_OFFSET(24)]
++	stp	x26, x27, [x2, #REG_OFFSET(26)]
++	stp	x28, x29, [x2, #REG_OFFSET(28)]
++	str	x30,      [x2, #REG_OFFSET(30)]
++
++	ret
++END(libucontext_getcontext)
+diff --git a/thirdparty/libucontext/arch/aarch64/include/libucontext/bits.h b/thirdparty/libucontext/arch/aarch64/include/libucontext/bits.h
+new file mode 100644
+index 0000000..7ac6597
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/include/libucontext/bits.h
+@@ -0,0 +1,34 @@
++#ifndef LIBUCONTEXT_BITS_H
++#define LIBUCONTEXT_BITS_H
++
++typedef unsigned long libucontext_greg_t;
++typedef unsigned long libucontext_gregset_t[34];
++
++typedef struct {
++	__uint128_t vregs[32];
++	unsigned int fpsr;
++	unsigned int fpcr;
++} libucontext_fpregset_t;
++
++typedef struct libucontext_sigcontext {
++	unsigned long fault_address;
++	unsigned long regs[31];
++	unsigned long sp, pc, pstate;
++	long double __reserved[256];
++} libucontext_mcontext_t;
++
++typedef struct {
++	void *ss_sp;
++	int ss_flags;
++	size_t ss_size;
++} libucontext_stack_t;
++
++typedef struct libucontext_ucontext {
++	unsigned long uc_flags;
++	struct libucontext_ucontext *uc_link;
++	libucontext_stack_t uc_stack;
++	unsigned char __pad[136];
++	libucontext_mcontext_t uc_mcontext;
++} libucontext_ucontext_t;
++
++#endif
+diff --git a/thirdparty/libucontext/arch/aarch64/makecontext.c b/thirdparty/libucontext/arch/aarch64/makecontext.c
+new file mode 100644
+index 0000000..081ee72
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/makecontext.c
+@@ -0,0 +1,62 @@
++/*
++ * Copyright (c) 2018 Ariadne Conill <ariadne@dereferenced.org>
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * This software is provided 'as is' and without any warranty, express or
++ * implied.  In no event shall the authors be liable for any damages arising
++ * from the use of this software.
++ */
++
++#include <stddef.h>
++#include <stdarg.h>
++#include <string.h>
++#include <stdint.h>
++#include <stdio.h>
++#include "defs.h"
++#include <libucontext/libucontext.h>
++
++
++extern void libucontext_trampoline(void);
++
++_Static_assert(offsetof(libucontext_ucontext_t, uc_mcontext.regs[0]) == R0_OFFSET, "R0_OFFSET is invalid");
++_Static_assert(offsetof(libucontext_ucontext_t, uc_mcontext.sp) == SP_OFFSET, "SP_OFFSET is invalid");
++_Static_assert(offsetof(libucontext_ucontext_t, uc_mcontext.pc) == PC_OFFSET, "PC_OFFSET is invalid");
++_Static_assert(offsetof(libucontext_ucontext_t, uc_mcontext.pstate) == PSTATE_OFFSET, "PSTATE_OFFSET is invalid");
++
++void
++libucontext_makecontext(libucontext_ucontext_t *ucp, void (*func)(void), int argc, ...)
++{
++	unsigned long *sp;
++	unsigned long *regp;
++	va_list va;
++	int i;
++
++	sp = (unsigned long *) ((uintptr_t) ucp->uc_stack.ss_sp + ucp->uc_stack.ss_size);
++	sp -= argc < 8 ? 0 : argc - 8;
++	sp = (unsigned long *) (((uintptr_t) sp & -16L));
++
++	ucp->uc_mcontext.sp = (uintptr_t) sp;
++	ucp->uc_mcontext.pc = (uintptr_t) func;
++	ucp->uc_mcontext.regs[19] = (uintptr_t) ucp->uc_link;
++	ucp->uc_mcontext.regs[30] = (uintptr_t) &libucontext_trampoline;
++
++	va_start(va, argc);
++
++	regp = (void *) &(ucp->uc_mcontext.regs[0]);
++
++	for (i = 0; (i < argc && i < 8); i++)
++		*regp++ = va_arg (va, unsigned long);
++
++	for (; i < argc; i++)
++		*sp++ = va_arg (va, unsigned long);
++
++	va_end(va);
++}
++
++#ifdef EXPORT_UNPREFIXED
++extern __typeof(libucontext_makecontext) makecontext __attribute__((weak, __alias__("libucontext_makecontext")));
++extern __typeof(libucontext_makecontext) __makecontext __attribute__((weak, __alias__("libucontext_makecontext")));
++#endif
+diff --git a/thirdparty/libucontext/arch/aarch64/setcontext.S b/thirdparty/libucontext/arch/aarch64/setcontext.S
+new file mode 100644
+index 0000000..f348360
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/setcontext.S
+@@ -0,0 +1,53 @@
++/*
++ * Copyright (c) 2018, 2020 Ariadne Conill <ariadne@dereferenced.org>
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * This software is provided 'as is' and without any warranty, express or
++ * implied.  In no event shall the authors be liable for any damages arising
++ * from the use of this software.
++ */
++
++#include "defs.h"
++
++ALIAS(setcontext, libucontext_setcontext)
++ALIAS(__setcontext, libucontext_setcontext)
++
++	.global PROC_NAME(libucontext_setcontext);
++	.align  2;
++	TYPE(libucontext_setcontext)
++	ENT(libucontext_setcontext)
++PROC_NAME(libucontext_setcontext):
++	/* restore GPRs */
++	ldp	x18, x19, [x0, #REG_OFFSET(18)]
++	ldp	x20, x21, [x0, #REG_OFFSET(20)]
++	ldp	x22, x23, [x0, #REG_OFFSET(22)]
++	ldp	x24, x25, [x0, #REG_OFFSET(24)]
++	ldp	x26, x27, [x0, #REG_OFFSET(26)]
++	ldp	x28, x29, [x0, #REG_OFFSET(28)]
++	ldr	x30,      [x0, #REG_OFFSET(30)]
++
++	/* save current stack pointer */
++	ldr	x2, [x0, #SP_OFFSET]
++	mov	sp, x2
++
++	add x2, x0, #FPSIMD_CONTEXT_OFFSET
++	ldp q8, q9,   [x2, #144]
++	ldp q10, q11, [x2, #176]
++	ldp q12, q13, [x2, #208]
++	ldp q14, q15, [x2, #240]
++
++	/* save current program counter in link register */
++	ldr	x16, [x0, #PC_OFFSET]
++
++	/* restore args */
++	ldp	x2, x3, [x0, #REG_OFFSET(2)]
++	ldp	x4, x5, [x0, #REG_OFFSET(4)]
++	ldp	x6, x7, [x0, #REG_OFFSET(6)]
++	ldp	x0, x1, [x0, #REG_OFFSET(0)]
++
++	/* jump to new PC */
++	br	x16
++END(libucontext_setcontext)
+diff --git a/thirdparty/libucontext/arch/aarch64/swapcontext.S b/thirdparty/libucontext/arch/aarch64/swapcontext.S
+new file mode 100644
+index 0000000..fc587e3
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/swapcontext.S
+@@ -0,0 +1,69 @@
++/*
++ * Copyright (c) 2018 Ariadne Conill <ariadne@dereferenced.org>
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * This software is provided 'as is' and without any warranty, express or
++ * implied.  In no event shall the authors be liable for any damages arising
++ * from the use of this software.
++ */
++
++#include "defs.h"
++
++ALIAS(swapcontext, libucontext_swapcontext)
++ALIAS(__swapcontext, libucontext_swapcontext)
++
++	.global PROC_NAME(libucontext_swapcontext);
++	.align  2;
++	TYPE(libucontext_swapcontext)
++	ENT(libucontext_swapcontext)
++PROC_NAME(libucontext_swapcontext):
++	str	xzr, [x0, #REG_OFFSET(0)]
++
++	/* save GPRs */
++	stp	x2, x3,   [x0, #REG_OFFSET(2)]
++	stp	x4, x5,   [x0, #REG_OFFSET(4)]
++	stp	x6, x7,   [x0, #REG_OFFSET(6)]
++	stp	x8, x9,   [x0, #REG_OFFSET(8)]
++	stp	x10, x11, [x0, #REG_OFFSET(10)]
++	stp	x12, x13, [x0, #REG_OFFSET(12)]
++	stp	x14, x15, [x0, #REG_OFFSET(14)]
++	stp	x16, x17, [x0, #REG_OFFSET(16)]
++	stp	x18, x19, [x0, #REG_OFFSET(18)]
++	stp	x20, x21, [x0, #REG_OFFSET(20)]
++	stp	x22, x23, [x0, #REG_OFFSET(22)]
++	stp	x24, x25, [x0, #REG_OFFSET(24)]
++	stp	x26, x27, [x0, #REG_OFFSET(26)]
++	stp	x28, x29, [x0, #REG_OFFSET(28)]
++	str	x30,      [x0, #REG_OFFSET(30)]
++
++	/* save current program counter in link register */
++	str	x30, [x0, #PC_OFFSET]
++
++	/* save current stack pointer */
++	mov	x2, sp
++	str	x2, [x0, #SP_OFFSET]
++
++	/* save pstate */
++	str	xzr, [x0, #PSTATE_OFFSET]
++
++	add x2, x0, #FPSIMD_CONTEXT_OFFSET
++	stp q8, q9,   [x2, #144]
++	stp q10, q11, [x2, #176]
++	stp q12, q13, [x2, #208]
++	stp q14, q15, [x2, #240]
++
++	/* context to swap to is in x1 so... we move to x0 and call setcontext */
++	/* store our link register in x28 */
++	mov	x28, x30
++
++	/* move x1 to x0 and call setcontext */
++	mov	x0, x1
++	bl	PROC_NAME(libucontext_setcontext)
++
++	/* hmm, we came back here try to return */
++	mov	x30, x28
++	ret
++END(libucontext_swapcontext)
+diff --git a/thirdparty/libucontext/arch/aarch64/trampoline.c b/thirdparty/libucontext/arch/aarch64/trampoline.c
+new file mode 100644
+index 0000000..699a050
+--- /dev/null
++++ b/thirdparty/libucontext/arch/aarch64/trampoline.c
+@@ -0,0 +1,3 @@
++#include "defs.h"
++#include <libucontext/libucontext.h>
++#include "common-trampoline.c"
+diff --git a/thirdparty/libucontext/arch/common/common-defs.h b/thirdparty/libucontext/arch/common/common-defs.h
+new file mode 100644
+index 0000000..2940ba3
+--- /dev/null
++++ b/thirdparty/libucontext/arch/common/common-defs.h
+@@ -0,0 +1,64 @@
++#ifndef __ARCH_COMMON_COMMON_DEFS_H
++#define __ARCH_COMMON_COMMON_DEFS_H
++
++#ifndef SETUP_FRAME
++# define SETUP_FRAME(__proc)
++#endif
++
++#ifndef PUSH_FRAME
++# define PUSH_FRAME(__proc)
++#endif
++
++#ifndef POP_FRAME
++# define POP_FRAME(__proc)
++#endif
++
++#ifndef ENT
++# define ENT(__proc)
++#endif
++
++#ifndef TYPE
++# ifdef __clang__
++#  define TYPE(__proc) // .type not supported
++# else
++#  define TYPE(__proc)	.type	__proc, @function;
++#endif
++#endif
++
++#ifndef PROC_NAME
++# ifdef __MACH__
++#  define PROC_NAME(__proc) _ ## __proc
++# else
++#  define PROC_NAME(__proc) __proc
++# endif
++#endif
++
++#define FUNC(__proc)					\
++	.global PROC_NAME(__proc);			\
++	.align  2;					\
++	TYPE(__proc)					\
++	ENT(__proc)					\
++PROC_NAME(__proc):					\
++	SETUP_FRAME(__proc)
++
++#ifndef END
++#ifdef __clang__
++#define END(__proc)
++#else
++#define END(__proc)					\
++	.end	__proc;					\
++	.size	__proc,.-__proc;
++#endif
++#endif
++
++#ifdef EXPORT_UNPREFIXED
++#define ALIAS(__alias, __real)				\
++	.weak	__alias;				\
++	__alias = __real;
++#else
++#define ALIAS(...)
++#endif
++
++#define REG_OFFSET(__reg)       (MCONTEXT_GREGS + ((__reg) * REG_SZ))
++
++#endif
+diff --git a/thirdparty/libucontext/arch/common/common-trampoline.c b/thirdparty/libucontext/arch/common/common-trampoline.c
+new file mode 100644
+index 0000000..41f994b
+--- /dev/null
++++ b/thirdparty/libucontext/arch/common/common-trampoline.c
+@@ -0,0 +1,41 @@
++/*
++ * Copyright (c) 2020 Ariadne Conill <ariadne@dereferenced.org>
++ *
++ * Permission to use, copy, modify, and/or distribute this software for any
++ * purpose with or without fee is hereby granted, provided that the above
++ * copyright notice and this permission notice appear in all copies.
++ *
++ * This software is provided 'as is' and without any warranty, express or
++ * implied.  In no event shall the authors be liable for any damages arising
++ * from the use of this software.
++ */
++
++#include <stddef.h>
++#include <stdlib.h>
++#include <stdio.h>
++
++/* We need to make sure that the C compiler doesn't push any
++ * additional data to the stack frame. Otherwise, assumptions
++ * made by the architecture-specific implementation of the
++ * FETCH_LINKPTR() macro about the location of the linkptr,
++ * relative to the stack pointer, will not hold.
++ *
++ * Hence, we compile this function with -fomit-frame-pointer
++ * and use the register storage-class specifier for all local
++ * vars. Note that the latter is just a "suggestion" (see C99).
++ */
++
++__attribute__ ((visibility ("hidden")))
++__attribute__ ((optimize ("omit-frame-pointer")))
++void
++libucontext_trampoline(void)
++{
++	register libucontext_ucontext_t *uc_link = NULL;
++
++	FETCH_LINKPTR(uc_link);
++
++	if (uc_link == NULL)
++		exit(0);
++
++	libucontext_setcontext(uc_link);
++}
+diff --git a/thirdparty/libucontext/arch/common/include/libucontext/bits.h b/thirdparty/libucontext/arch/common/include/libucontext/bits.h
+new file mode 100644
+index 0000000..968d6be
+--- /dev/null
++++ b/thirdparty/libucontext/arch/common/include/libucontext/bits.h
+@@ -0,0 +1,18 @@
++#ifndef LIBUCONTEXT_BITS_H
++#define LIBUCONTEXT_BITS_H
++
++#ifndef FREESTANDING
++
++#include <ucontext.h>
++
++/* glibc on powerpc does not define greg_t */
++#if defined(__GLIBC__) && defined(__powerpc__)
++typedef unsigned long greg_t;
++#endif
++
++typedef greg_t libucontext_greg_t;
++typedef ucontext_t libucontext_ucontext_t;
++
++#endif
++
++#endif
+diff --git a/thirdparty/libucontext/include/libucontext/libucontext.h b/thirdparty/libucontext/include/libucontext/libucontext.h
+new file mode 100644
+index 0000000..aac33f6
+--- /dev/null
++++ b/thirdparty/libucontext/include/libucontext/libucontext.h
+@@ -0,0 +1,20 @@
++#ifndef LIBUCONTEXT_LIBUCONTEXT_H
++#define LIBUCONTEXT_LIBUCONTEXT_H
++
++#include <stddef.h>
++#include <libucontext/bits.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++int  libucontext_getcontext(libucontext_ucontext_t *);
++void libucontext_makecontext(libucontext_ucontext_t *, void (*)(), int, ...);
++int  libucontext_setcontext(const libucontext_ucontext_t *);
++int  libucontext_swapcontext(libucontext_ucontext_t *, const libucontext_ucontext_t *);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif
+diff --git a/src/core/filesystem_posix.cpp b/src/core/filesystem_posix.cpp
+--- a/src/core/filesystem_posix.cpp
++++ b/src/core/filesystem_posix.cpp
+@@ -23,3 +23,5 @@
+ #if defined(__APPLE__)
+ #include <mach-o/dyld.h>
++#elif defined(__ANDROID__)
++#include <dlfcn.h>
+ #endif
+@@ -91,9 +93,18 @@
+   std::error_code ec;
+   std::filesystem::path canonical_path = std::filesystem::weakly_canonical(executable_path, ec);
+   return ec ? std::filesystem::path(executable_path) : canonical_path;
+-#else
++#elif defined(__ANDROID__)
++  // SDLActivity loads this code from libmain.so; report this shared library's
++  // directory so runtime-loaded GPU plugins can be found beside it.
++  static int module_anchor;
++  Dl_info info{};
++  if (dladdr(&module_anchor, &info) != 0 && info.dli_fname != nullptr) {
++    return info.dli_fname;
++  }
++  return {};
++#else
+   char buff[FILENAME_MAX] = "";
+   readlink("/proc/self/exe", buff, FILENAME_MAX);
+   std::string s(buff);
+   return s;
+ #endif
+ }
+diff --git a/src/ui/windowed_app_main_sdl.cpp b/src/ui/windowed_app_main_sdl.cpp
+--- a/src/ui/windowed_app_main_sdl.cpp
++++ b/src/ui/windowed_app_main_sdl.cpp
+@@ -55,7 +55,16 @@
+     }
+ #endif
+ 
+-    std::unique_ptr<rex::ui::WindowedApp> app = rex::ui::GetWindowedAppCreator()(app_context);
++#if REX_PLATFORM_ANDROID
++    auto app_creator = rex::ui::WindowedApp::GetCreator("mcla");
++#else
++    auto app_creator = rex::ui::GetWindowedAppCreator();
++#endif
++    if (!app_creator) {
++      REXLOG_ERROR("No windowed app creator registered");
++      return EXIT_FAILURE;
++    }
++    std::unique_ptr<rex::ui::WindowedApp> app = app_creator(app_context);
+ 
+     // Match remaining positional args to the app's expected options.
+     const auto& option_names = app->GetPositionalOptions();
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -12,6 +12,9 @@
+ #include <rex/rex_app.h>
+ 
+ #include <cstdlib>
++#if defined(__ANDROID__)
++#include <SDL3/SDL_system.h>
++#endif
+ 
+ #include <rex/assert.h>
+ #include <rex/cvar.h>
+@@ -168,7 +171,15 @@
+                                         log_level_str, category_levels);
+   if (log_file_cvar.empty()) {
+     log_config.app_name = std::string(GetName());
++#if defined(__ANDROID__)
++    if (const char* internal_storage = SDL_GetAndroidExternalStoragePath()) {
++      log_config.log_dir = (std::filesystem::path(internal_storage) / "logs").string();
++    } else {
++      log_config.app_name.clear();
++    }
++#else
+     log_config.log_dir = (exe_dir / "logs").string();
++#endif
+   }
+ 
+   rex::InitLogging(log_config);
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index f102b56..2d6ae97 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -290,7 +290,7 @@ set(SDL_DUMMYVIDEO OFF CACHE BOOL "" FORCE)
+ 
+ # Linux video and audio backends. Both video drivers are always built so the
+ # one in use stays a runtime choice.
+-if(UNIX AND NOT APPLE)
++if(UNIX AND NOT APPLE AND NOT ANDROID)
+     set(SDL_X11               ON  CACHE BOOL "" FORCE)
+     set(SDL_WAYLAND           ON  CACHE BOOL "" FORCE)
+     set(SDL_ALSA              ON  CACHE BOOL "" FORCE)

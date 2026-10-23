@@ -1,0 +1,151 @@
+plugins {
+    id 'com.android.application'
+}
+
+def repoRoot = project.file('../..').canonicalFile
+def rexSdkPath = providers.gradleProperty('REXSDK_DIR')
+    .orElse(providers.environmentVariable('REXSDK_DIR')).getOrNull()
+if (!rexSdkPath) {
+    throw new GradleException('Set REXSDK_DIR to the Android-patched ReXGlue v0.10.0 tree.')
+}
+def rexSdk = file(rexSdkPath).canonicalFile
+if (!new File(rexSdk, 'CMakeLists.txt').isFile()) {
+    throw new GradleException("ReXGlue SDK source tree not found: ${rexSdk}")
+}
+def codegenPath = providers.environmentVariable('REXGLUE_CODEGEN').getOrNull()
+def codegenLibPath = providers.environmentVariable('REXGLUE_HOST_LIB_DIR').getOrNull()
+def pythonExecutable = providers.gradleProperty('PYTHON_EXECUTABLE').orElse(providers.environmentVariable('PYTHON_EXECUTABLE')).getOrNull()
+def releaseStoreFile = providers.gradleProperty("MCLA_RELEASE_STORE_FILE")
+    .orElse(providers.environmentVariable("MCLA_RELEASE_STORE_FILE")).getOrNull()
+def releaseStorePassword = providers.gradleProperty("MCLA_RELEASE_STORE_PASSWORD")
+    .orElse(providers.environmentVariable("MCLA_RELEASE_STORE_PASSWORD")).getOrNull()
+def releaseKeyAlias = providers.gradleProperty("MCLA_RELEASE_KEY_ALIAS")
+    .orElse(providers.environmentVariable("MCLA_RELEASE_KEY_ALIAS")).getOrNull()
+def releaseKeyPassword = providers.gradleProperty("MCLA_RELEASE_KEY_PASSWORD")
+    .orElse(providers.environmentVariable("MCLA_RELEASE_KEY_PASSWORD")).getOrNull()
+def releaseSigningValues = [releaseStoreFile, releaseStorePassword, releaseKeyAlias, releaseKeyPassword]
+def hasCustomReleaseSigning = releaseSigningValues.any { it != null && !it.trim().isEmpty() }
+if (hasCustomReleaseSigning && releaseSigningValues.any { it == null || it.trim().isEmpty() }) {
+    throw new GradleException("Custom release signing needs MCLA_RELEASE_STORE_FILE, MCLA_RELEASE_STORE_PASSWORD, MCLA_RELEASE_KEY_ALIAS, and MCLA_RELEASE_KEY_PASSWORD.")
+}
+
+def gameXex = new File(repoRoot, 'game/default.xex')
+tasks.register('generateMclaRecomp') {
+    group = 'build'
+    description = 'Run host-native ReXGlue code generation for the local game dump.'
+    inputs.file(new File(repoRoot, 'mcla_manifest.toml'))
+    if (gameXex.isFile()) {
+        inputs.file(gameXex)
+    }
+    outputs.file(new File(repoRoot, 'generated/default/codegen.build.stamp'))
+    outputs.upToDateWhen { false }
+    doLast {
+        if (!new File(repoRoot, 'game/default.xex').isFile()) {
+            throw new GradleException('Missing game/default.xex. Extract your own supported MCLA Complete Edition dump first.')
+        }
+        if (!codegenPath) {
+            throw new GradleException('Set REXGLUE_CODEGEN to the host-native Linux ReXGlue v0.10.0 executable.')
+        }
+        def codegen = file(codegenPath)
+        if (!codegen.canExecute()) {
+            throw new GradleException("Host ReXGlue code generator is not executable: ${codegen}")
+        }
+        def hostLibs = codegenLibPath ? file(codegenLibPath) : codegen.parentFile.parentFile.toPath().resolve('lib').toFile()
+        def priorLdPath = System.getenv('LD_LIBRARY_PATH')
+        exec {
+            executable codegen.absolutePath
+            args 'codegen', new File(repoRoot, 'mcla_manifest.toml').absolutePath
+            workingDir repoRoot
+            environment 'LD_LIBRARY_PATH', hostLibs.absolutePath + (priorLdPath ? ":${priorLdPath}" : '')
+        }
+        def generatedCmake = new File(repoRoot, 'generated/rexglue.cmake')
+        def generatedText = generatedCmake.getText('UTF-8')
+        def targetCodegenCommand = 'COMMAND $<TARGET_FILE:rex::rexglue> codegen'
+        def hostCodegenCommand = 'COMMAND "' + codegen.absolutePath.replace('\\', '/') + '" codegen'
+        if (generatedText.contains(targetCodegenCommand)) {
+            generatedCmake.write(generatedText.replace(targetCodegenCommand, hostCodegenCommand), 'UTF-8')
+        }
+    }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn tasks.named('generateMclaRecomp')
+}
+
+android {
+    namespace 'org.libsdl.app'
+    compileSdk 35
+    ndkVersion '30.0.16248370'
+
+    defaultConfig {
+        applicationId 'org.mcla.recomp'
+        minSdk 26
+        targetSdk 35
+        versionCode 3
+        versionName '0.1.2-experimental'
+
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_PLATFORM=android-26',
+                    '-DANDROID_STL=c++_shared',
+                    '-DREXGLUE_ENABLE_TRACY=OFF',
+                    "-DREXSDK_DIR=${rexSdk.absolutePath}",
+                    '-DREXGLUE_USE_VULKAN=ON',
+                    '-DREXGLUE_USE_D3D12=OFF'
+                if (codegenPath) {
+                    arguments "-DREXGLUE_CODEGEN_EXECUTABLE=${codegenPath}"
+                }
+                if (pythonExecutable) {
+                    arguments "-DPYTHON_EXECUTABLE=${pythonExecutable}"
+                }
+                targets 'mcla', 'rexgpu-xenos', 'main_hook', 'hook_impl'
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasCustomReleaseSigning) {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            } else {
+                // Local experimental APKs stay installable; the debug key is not for public distribution.
+                initWith signingConfigs.debug
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+
+    externalNativeBuild {
+        cmake {
+            path file('../../CMakeLists.txt')
+            version '3.31.6'
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+
+    lint {
+        abortOnError false
+    }
+}

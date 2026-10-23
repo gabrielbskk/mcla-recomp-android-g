@@ -1,0 +1,6 @@
+* text=auto
+*.sh text eol=lf
+*.patch text eol=lf
+
+
+patches/rexglue-v0.10.0-android-arm64.patch whitespace=-blank-at-eol

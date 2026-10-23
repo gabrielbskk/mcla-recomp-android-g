@@ -35,7 +35,21 @@ Uninstalling the app removes imported files in `filesDir` and private saves. Bac
 
 Runtime logs stay in the app-private directory and rotate. **Export logs** asks the user to choose a destination through SAF once; a destination such as `Documents/MCLA/logs` can be selected. This avoids broad storage permission. When available, the app also exports a report about the previous process exit.
 
-V8 contains temporary file-open/read tracing. Export and review the app's log before making claims about whether the runtime opened `.bik`, `nxeart`, or `root_directory_padding.pad`. No exported V8 gameplay trace has been reviewed yet.
+## Launcher settings and intent overrides
+
+The import screen has a **Configurações** section for guest resolution (540p/720p/1080p), FPS limit, V-Sync, effects preset, FPS counter, and optional performance logging. These are stored in the same private `filesDir/mcla-recomp/userdata/mcla.toml` read by ReXGlue at startup; the in-game settings menu uses the same cvars. The FPS counter defaults to enabled, including when no settings file exists. Performance logging defaults to off and, when enabled, writes one-second render-loop FPS, average frame time, and p95 to `filesDir/mcla-recomp/logs/performance.csv`. Fence-wait time split by submit/readback/acquire is marked unavailable until the renderer exports those counters; this build does not change the renderer.
+
+For a test run without changing the launcher controls, start the gameplay activity directly (game data must already be imported):
+
+```sh
+adb shell am start -n org.mcla.recomp.test/org.mcla.recomp.DataSetupActivity \
+  --es resolution 540p --es effects low --ei fps_limit 0 \
+  --ez vsync false --ez fps_counter true --ez performance_logging true
+```
+
+The launcher validates `filesDir/game` and automatically forwards the extras to gameplay when it is ready. Supported `effects` values are `low`/`performance`, `medium`/`balanced`, and `high`/`original`. Valid FPS limits are `-1`, `0`, `30`, `60`, `120`, and `240`; invalid extras fall back to the app defaults. Intent overrides apply only to that launch and do not rewrite the TOML file.
+
+The current Android test build includes temporary file-open/read tracing. Export and review the app log before deciding whether `.bik`, `nxeart`, or `root_directory_padding.pad` are needed. No gameplay trace from this build has been reviewed yet, so those files remain unclassified by runtime evidence.
 
 ## Build
 

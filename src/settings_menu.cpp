@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <iterator>
 #include <string>
 
 #include <rex/cvar.h>
@@ -32,11 +33,13 @@
 
 REXCVAR_DEFINE_BOOL(mcla_motion_blur, true, "MCLA", "Motion blur");
 REXCVAR_DEFINE_BOOL(mcla_depth_of_field, true, "MCLA", "Depth of field blur");
-REXCVAR_DEFINE_BOOL(mcla_fps_counter, false, "MCLA", "Show a compact FPS counter");
+REXCVAR_DEFINE_BOOL(mcla_fps_counter, true, "MCLA", "Show a compact FPS counter");
 REXCVAR_DEFINE_STRING(mcla_resolution, "540p", "MCLA",
-                      "Guest resolution: 540p, 720p or 1080p (next start)");
+                      "Guest resolution: 540p, 720p or 1080p (next start)")
+    .allowed({"540p", "720p", "1080p"});
 REXCVAR_DEFINE_STRING(mcla_graphics_preset, "performance", "MCLA",
-                      "Graphics preset: performance, balanced or original");
+                      "Graphics preset: performance, balanced or original")
+    .allowed({"performance", "balanced", "original"});
 REXCVAR_DEFINE_BOOL(mcla_settings_menu, true, "MCLA",
                     "Add the settings submenus to the pause menu");
 
@@ -537,7 +540,7 @@ int ItemCurrentIndex(const ItemDef& item) {
 
 std::atomic<bool> g_settings_dirty{false};
 
-void ApplyGraphicsPreset(const char* preset) {
+void ApplyGraphicsPreset(const char* preset, bool mark_dirty = true) {
   const bool performance = std::strcmp(preset, "performance") == 0;
   const bool balanced = std::strcmp(preset, "balanced") == 0;
   const char* quality = performance ? "0.25" : balanced ? "0.75" : "1.0";
@@ -558,7 +561,7 @@ void ApplyGraphicsPreset(const char* preset) {
   OptionSet("mcla_msaa", performance || balanced ? "false" : "true");
   OptionSet("mcla_motion_blur", performance ? "false" : "true");
   OptionSet("mcla_depth_of_field", performance ? "false" : "true");
-  g_settings_dirty.store(true, std::memory_order_relaxed);
+  if (mark_dirty) g_settings_dirty.store(true, std::memory_order_relaxed);
 }
 
 void ItemSetIndex(const ItemDef& item, int index) {
@@ -932,6 +935,44 @@ bool NodeReachesList(uint32_t node, uint32_t list, int depth, int& budget) {
 }
 
 }  // namespace
+
+void MclaApplyStartupSettings() {
+  const std::string resolution = rex::cvar::GetFlagByName("mcla_resolution");
+  const char* width = nullptr;
+  const char* height = nullptr;
+  if (resolution == "540p") { width = "960"; height = "540"; }
+  else if (resolution == "720p") { width = "1280"; height = "720"; }
+  else if (resolution == "1080p") { width = "1920"; height = "1080"; }
+  if (width) {
+    rex::cvar::SetFlagByName("video_mode_width", width);
+    rex::cvar::SetFlagByName("video_mode_height", height);
+  } else {
+    REXLOG_WARN("settings: invalid resolution '{}'; retaining runtime defaults", resolution);
+  }
+
+#if defined(__ANDROID__)
+  // A launcher preset is stored as one cvar. Apply it only when no individual
+  // detail options were explicitly saved by the in-game menu.
+  if (rex::cvar::GetFlagSource("mcla_graphics_preset") != rex::cvar::Source::kDefault) {
+    constexpr const char* kDetailOptions[] = {
+        "mcla_shadows", "mcla_race_shadows", "mcla_fast_car_shadows",
+        "mcla_foliage_shadows", "mcla_city_lod", "mcla_traffic_lod",
+        "mcla_traffic_distance", "mcla_pedestrians", "mcla_parked_cars",
+        "mcla_foliage_impostors", "mcla_fullscreen_blur", "mcla_msaa",
+        "mcla_motion_blur", "mcla_depth_of_field"};
+    const bool details_were_saved = std::any_of(std::begin(kDetailOptions),
+        std::end(kDetailOptions), [](const char* name) {
+          return rex::cvar::GetFlagSource(name) != rex::cvar::Source::kDefault;
+        });
+    if (!details_were_saved) {
+      const std::string preset = rex::cvar::GetFlagByName("mcla_graphics_preset");
+      if (preset == "performance" || preset == "balanced" || preset == "original") {
+        ApplyGraphicsPreset(preset.c_str(), false);
+      }
+    }
+  }
+#endif
+}
 
 // --- Hooks -------------------------------------------------------------------
 

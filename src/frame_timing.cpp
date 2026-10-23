@@ -39,7 +39,8 @@
 REXCVAR_DEFINE_INT32(mcla_fps, 30, "MCLA",
                      "Frame-rate target: 30, 60 or 120. 0 runs uncapped. "
                      "-1 restores the game's original fixed 30 Hz timing")
-    .range(-1, 240);
+    .range(-1, 240)
+    .allowed({"-1", "0", "30", "60", "120", "240"});
 
 // Off by default: skipping here also skips whatever puts the game logo on the
 // title screen (only "PRESS START" remains). Tested with and without the

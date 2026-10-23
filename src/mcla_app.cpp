@@ -1,6 +1,7 @@
 #include "generated/default/mcla_init.h"
 
 #include "mcla_app.h"
+#include "render_metrics.h"
 
 #include <algorithm>
 #include <array>
@@ -77,8 +78,9 @@ void StartAndroidPerformanceLog() {
       return;
     }
     if (!has_content) {
-      output << "elapsed_s,fps,frame_ms_avg,frame_ms_p95,fence_submit_wait_ms,"
-                "fence_readback_wait_ms,fence_acquire_wait_ms\n";
+      output << "elapsed_s,draw_fps,frame_ms_avg,frame_ms_p50,frame_ms_p95,frame_ms_p99,"
+                "frame_ms_max,frames_over_50ms,fence_submit_wait_ms,fence_readback_wait_ms,"
+                "fence_acquire_wait_ms\n";
       output.flush();
     }
     using Clock = std::chrono::steady_clock;
@@ -95,24 +97,17 @@ void StartAndroidPerformanceLog() {
       std::vector<float> samples;
       samples.reserve(static_cast<size_t>(count));
       const uint64_t first = sequence - count;
-      double sum_ms = 0.0;
       for (uint64_t index = first; index < sequence; ++index) {
         const float sample = g_perf_frame_times_ms[index % kPerfFrameRingSize].load(
             std::memory_order_relaxed);
-        if (std::isfinite(sample) && sample > 0.0f) {
-          samples.push_back(sample);
-          sum_ms += sample;
-        }
+        samples.push_back(sample);
       }
-      std::sort(samples.begin(), samples.end());
       const double elapsed = std::chrono::duration<double>(now - last_flush).count();
-      const double fps = elapsed > 0.0 ? static_cast<double>(samples.size()) / elapsed : 0.0;
-      const double average_ms = samples.empty() ? 0.0 : sum_ms / samples.size();
-      const size_t p95_index = samples.empty() ? 0 : std::min(samples.size() - 1,
-          static_cast<size_t>(std::ceil(samples.size() * 0.95)) - 1);
-      const double p95_ms = samples.empty() ? 0.0 : samples[p95_index];
+      const auto summary = mcla::perf::SummarizeFrameTimes(samples, elapsed);
       output << std::fixed << std::setprecision(3) << std::chrono::duration<double>(
-          now - process_started).count() << ',' << fps << ',' << average_ms << ',' << p95_ms
+          now - process_started).count() << ',' << summary.draws_per_second << ','
+             << summary.mean_ms << ',' << summary.p50_ms << ',' << summary.p95_ms << ','
+             << summary.p99_ms << ',' << summary.max_ms << ',' << summary.over_50ms
              << ",unavailable,unavailable,unavailable\n";
       output.flush();
       last_sequence = sequence;
@@ -140,10 +135,11 @@ void StopAndroidPerformanceLog() {
   g_perf_log_enabled.store(false, std::memory_order_release);
 }
 
-void RecordAndroidRenderFrame(float delta_time) {
+void RecordAndroidRenderFrame(double frame_ms) {
   if (!g_perf_log_enabled.load(std::memory_order_relaxed)) return;
+  if (!std::isfinite(frame_ms) || frame_ms <= 0.0) return;
   const uint64_t sequence = g_perf_frame_sequence.load(std::memory_order_relaxed);
-  g_perf_frame_times_ms[sequence % kPerfFrameRingSize].store(delta_time * 1000.0f,
+  g_perf_frame_times_ms[sequence % kPerfFrameRingSize].store(static_cast<float>(frame_ms),
                                                               std::memory_order_relaxed);
   g_perf_frame_sequence.store(sequence + 1, std::memory_order_release);
 }
@@ -156,15 +152,17 @@ class FpsCounterDialog final : public rex::ui::ImGuiDialog {
   void SetOverlayVisible(bool visible) { overlay_visible_ = visible; }
 
  protected:
-  void OnDraw(ImGuiIO& io) override {
-    if (!(io.DeltaTime > 0.0f) || !std::isfinite(io.DeltaTime)) {
-      return;
+  void OnDraw(ImGuiIO& /*io*/) override {
+    using Clock = std::chrono::steady_clock;
+    const double now_seconds = std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
+    mcla::perf::DrawRateSnapshot snapshot;
+    if (draw_rate_.RecordDraw(now_seconds, &snapshot)) {
+      measured_draw_fps_ = snapshot.draws_per_second;
+      measured_mean_frame_ms_ = snapshot.mean_frame_ms;
+      has_measurement_ = true;
     }
-    const float instant_fps = 1.0f / io.DeltaTime;
-    smoothed_fps_ = smoothed_fps_ > 0.0f ? smoothed_fps_ * 0.85f + instant_fps * 0.15f
-                                         : instant_fps;
 #if defined(__ANDROID__)
-    RecordAndroidRenderFrame(io.DeltaTime);
+    RecordAndroidRenderFrame(draw_rate_.last_frame_ms());
 #endif
     if (!overlay_visible_) {
       return;
@@ -179,10 +177,14 @@ class FpsCounterDialog final : public rex::ui::ImGuiDialog {
     if (ImGui::Begin("MCLA FPS", nullptr, kFlags)) {
 #if defined(__ANDROID__)
       ImGui::SetWindowFontScale(0.82f);
-      ImGui::Text("%.0f FPS  |  %.1f ms", smoothed_fps_, 1000.0f / smoothed_fps_);
+      if (has_measurement_) {
+        ImGui::Text("DRAW FPS: %.0f  |  %.1f ms", measured_draw_fps_, measured_mean_frame_ms_);
+      } else {
+        ImGui::Text("DRAW FPS: --  |  FRAME: -- ms");
+      }
       ImGui::SetWindowFontScale(1.0f);
 #else
-      ImGui::Text("FPS: %.0f", smoothed_fps_);
+      ImGui::Text("DRAW FPS: %.0f", measured_draw_fps_);
 #endif
     }
     ImGui::End();
@@ -190,7 +192,10 @@ class FpsCounterDialog final : public rex::ui::ImGuiDialog {
 
  private:
   bool overlay_visible_ = false;
-  float smoothed_fps_ = 0.0f;
+  mcla::perf::DrawRateWindow draw_rate_;
+  double measured_draw_fps_ = 0.0;
+  double measured_mean_frame_ms_ = 0.0;
+  bool has_measurement_ = false;
 };
 
 }  // namespace
@@ -290,7 +295,7 @@ void MclaApp::OnConfigurePaths(rex::PathConfig& paths) {
     }
     create_error.clear();
     const auto log_dir = app_data / "logs";
-    g_android_perf_log_path = (log_dir / "performance.csv").string();
+    g_android_perf_log_path = (log_dir / "performance-v2.csv").string();
     std::filesystem::create_directories(log_dir, create_error);
     if (create_error) {
       if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";

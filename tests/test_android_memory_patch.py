@@ -9,7 +9,8 @@ PATCHER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(PATCHER)
 
 
-MEMORY_BACKEND = """#if REX_PLATFORM_ANDROID
+MEMORY_BACKEND = """static int (*android_ASharedMemory_create_)(const char* name, size_t size);
+#if REX_PLATFORM_ANDROID
   // TODO(Triang3l): Check if memfd can be used instead on API 30+.
   if (android_ASharedMemory_create_) {
     int sharedmem_fd = android_ASharedMemory_create_(path.c_str(), length);
@@ -49,7 +50,8 @@ GUEST_MAPS = """    if (!views_.all_views[n]) {
 class AndroidMemoryPatchTest(unittest.TestCase):
     def test_initializes_android_shared_memory_before_creating_mapping(self):
         patched = PATCHER.patch_android_memory_backend(MEMORY_BACKEND)
-        self.assertLess(patched.index("std::call_once"), patched.index("android_ASharedMemory_create_"))
+        self.assertLess(patched.index("std::call_once"),
+                        patched.index("AndroidLogMemoryDiagnostics(path, length);"))
         self.assertIn("ASharedMemory_create failed", patched)
         self.assertIn("ashmem ASHMEM_SET_SIZE failed", patched)
         self.assertIn("errno", patched)
@@ -58,6 +60,59 @@ class AndroidMemoryPatchTest(unittest.TestCase):
         once = PATCHER.patch_android_memory_backend(MEMORY_BACKEND)
         twice = PATCHER.patch_android_memory_backend(once)
         self.assertEqual(once, twice)
+
+    def test_android_memory_initializer_upgrades_previous_patcher_output(self):
+        source = """void AndroidInitialize() {
+  const int api_level = rex::GetAndroidApiLevel();
+  if (api_level < 26) {
+    REXSYS_WARN("ASharedMemory is unavailable on Android API {}; using ashmem fallback",
+                api_level);
+    return;
+  }
+  dlerror();
+  libandroid_ = dlopen("libandroid.so", RTLD_NOW);
+  if (!libandroid_) {
+    const char* error = dlerror();
+    REXSYS_ERROR("dlopen(libandroid.so) failed: {}", error ? error : "unknown error");
+    return;
+  }
+  dlerror();
+  android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(
+      dlsym(libandroid_, "ASharedMemory_create"));
+  const char* error = dlerror();
+  if (error || !android_ASharedMemory_create_) {
+    REXSYS_ERROR("dlsym(ASharedMemory_create) failed: {}",
+                 error ? error : "symbol not found");
+    android_ASharedMemory_create_ = nullptr;
+    return;
+  }
+  REXSYS_INFO("Android shared-memory backend initialized: API {} via ASharedMemory_create",
+              api_level);
+}
+
+void AndroidShutdown() {}
+"""
+        patched = PATCHER.patch_android_memory_initializer(source)
+        self.assertIn("if (!libandroid_)", patched)
+        self.assertIn("if (!android_ASharedMemory_create_)", patched)
+        self.assertEqual(PATCHER.patch_android_memory_initializer(patched), patched)
+
+    def test_android_memory_backend_has_memfd_fallback_and_process_diagnostics(self):
+        patched = PATCHER.patch_android_memory_backend(MEMORY_BACKEND)
+        self.assertIn("memfd_create", patched)
+        self.assertIn("ftruncate64", patched)
+        self.assertIn("getrlimit(RLIMIT_AS", patched)
+        self.assertIn("/proc/self/maps", patched)
+        self.assertIn("stage=library_load", patched)
+        self.assertIn("strerror", patched)
+        self.assertLess(patched.index("ASharedMemory_create failed"),
+                        patched.index("memfd_create failed"))
+        self.assertIn("Android guest-memory preflight", patched)
+        self.assertIn("ASharedMemory_create_result", patched)
+        self.assertIn("memfd_create_result", patched)
+        self.assertIn("memfd_truncate_errno", patched)
+        self.assertNotIn("return kFileMappingHandleInvalid;\n    }\n    REXSYS_INFO(\"Android guest memory backing store created: provider=ASharedMemory_create",
+                    patched)
 
     def test_rejects_unknown_sdk_memory_backend(self):
         with self.assertRaises(SystemExit):
@@ -68,6 +123,13 @@ class AndroidMemoryPatchTest(unittest.TestCase):
             "#if defined(__APPLE__) || defined(__ANDROID__) || "
             "(defined(__linux__) && defined(_LIBCPP_VERSION))\n"
             "// Apple, Android, and Linux libc++ do not expose clock_time_conversion.\n"
+        )
+        self.assertEqual(PATCHER.patch_android_chrono_header(source), source)
+
+    def test_android_chrono_patch_accepts_sdk_android_guard_variant(self):
+        source = (
+            "#if defined(__APPLE__) || defined(__ANDROID__)\n"
+            "// Apple and Android NDK libc++ do not expose clock_time_conversion or clock_cast.\n"
         )
         self.assertEqual(PATCHER.patch_android_chrono_header(source), source)
 

@@ -144,9 +144,10 @@ public final class DataSetupActivity extends Activity {
                 index -> saveAppSetting("fps_limit", new String[]{"30", "60", "120", "0"}[index]));
         addSwitchSetting(root, "V-Sync", appSettings.vsync,
                 checked -> saveAppSetting("vsync", Boolean.toString(checked)));
-        addSpinnerSetting(root, "Preset de efeitos", new String[]{"Performance", "Balanceado", "Original"},
-                "performance".equals(appSettings.effects) ? 0 : "balanced".equals(appSettings.effects) ? 1 : 2,
-                index -> saveAppSetting("effects", new String[]{"performance", "balanced", "original"}[index]));
+        addSpinnerSetting(root, "Graphics preset", new String[]{"Super Low", "Low", "Medium", "High", "Ultra"},
+                "super_low".equals(appSettings.effects) ? 0 : "low".equals(appSettings.effects) ? 1
+                        : "medium".equals(appSettings.effects) ? 2 : "high".equals(appSettings.effects) ? 3 : 4,
+                index -> saveAppSetting("effects", new String[]{"super_low", "low", "medium", "high", "ultra"}[index]));
         addSwitchSetting(root, "Contador de FPS (ligado por padrão)", appSettings.fpsCounter,
                 checked -> saveAppSetting("fps_counter", Boolean.toString(checked)));
         addSwitchSetting(root, "Gravar log de desempenho", appSettings.performanceLogging,

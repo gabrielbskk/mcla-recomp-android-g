@@ -39,7 +39,6 @@ public final class MclaActivity extends SDLActivity {
         if (values.containsKey("vsync")) args.add(booleanFlag("vsync", overrides.vsync));
         if (values.containsKey("effects")) {
             args.add("--mcla_graphics_preset=" + overrides.effects);
-            appendPresetArgs(args, overrides.effects);
         }
         if (values.containsKey("fps_counter")) {
             args.add(booleanFlag("mcla_fps_counter", overrides.fpsCounter));
@@ -60,33 +59,4 @@ public final class MclaActivity extends SDLActivity {
         return enabled ? "--" + name : "--no-" + name;
     }
 
-    private static void appendPresetArgs(java.util.List<String> args, String preset) {
-        boolean performance = "performance".equals(preset);
-        boolean balanced = "balanced".equals(preset);
-        String quality = performance ? "0.25" : balanced ? "0.75" : "1.0";
-        String density = performance ? "0.0" : balanced ? "0.75" : "1.0";
-        String traffic = performance ? "100" : balanced ? "325" : "400";
-        addBool(args, "mcla_shadows", !performance);
-        addBool(args, "mcla_race_shadows", !performance);
-        addBool(args, "mcla_fast_car_shadows", performance);
-        addBool(args, "mcla_foliage_shadows", !performance && !balanced);
-        addValue(args, "mcla_city_lod", quality);
-        addValue(args, "mcla_traffic_lod", quality);
-        addValue(args, "mcla_traffic_distance", traffic);
-        addValue(args, "mcla_pedestrians", density);
-        addValue(args, "mcla_parked_cars", density);
-        addBool(args, "mcla_foliage_impostors", true);
-        addBool(args, "mcla_fullscreen_blur", !performance);
-        addBool(args, "mcla_msaa", !performance && !balanced);
-        addBool(args, "mcla_motion_blur", !performance);
-        addBool(args, "mcla_depth_of_field", !performance);
-    }
-
-    private static void addBool(java.util.List<String> args, String name, boolean value) {
-        args.add(booleanFlag(name, value));
-    }
-
-    private static void addValue(java.util.List<String> args, String name, String value) {
-        args.add("--" + name + "=" + value);
-    }
 }

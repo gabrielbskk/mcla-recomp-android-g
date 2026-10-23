@@ -42,6 +42,19 @@ class AndroidSettingsTest(unittest.TestCase):
             app,
         )
 
+    def test_native_graphics_preset_mapping(self):
+        compiler = shutil.which("c++") or shutil.which("clang++")
+        if not compiler:
+            self.skipTest("a C++ compiler is required for graphics preset tests")
+        with tempfile.TemporaryDirectory(prefix="mcla-graphics-presets-", dir=ROOT / "tests") as output:
+            executable = Path(output) / "graphics-presets-test"
+            subprocess.run([
+                compiler, "-std=c++17", f"-I{ROOT / 'src'}",
+                str(ROOT / "tests/test_graphics_presets.cpp"), "-o", str(executable),
+            ], check=True, capture_output=True, text=True)
+            result = subprocess.run([str(executable)], check=True, capture_output=True, text=True)
+            self.assertIn("graphics presets: PASS", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

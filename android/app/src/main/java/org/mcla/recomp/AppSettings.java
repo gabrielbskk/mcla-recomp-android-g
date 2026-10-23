@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /** Android launcher view of the same cvars stored in the runtime's mcla.toml. */
@@ -45,7 +46,7 @@ public final class AppSettings {
     }
 
     public static AppSettings defaults() {
-        return new AppSettings("540p", 30, false, "performance", true, false);
+        return new AppSettings("540p", 30, false, "medium", true, false);
     }
 
     public static AppSettings fromValues(Map<String, String> values, AppSettings fallback) {
@@ -177,9 +178,13 @@ public final class AppSettings {
     }
 
     public static String parseEffects(String value, String fallback) {
-        if ("low".equals(value) || "performance".equals(value)) return "performance";
-        if ("medium".equals(value) || "balanced".equals(value)) return "balanced";
-        if ("high".equals(value) || "original".equals(value)) return "original";
+        if (value == null) return fallback;
+        String preset = value.trim().toLowerCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
+        if ("performance".equals(preset)) return "super_low";
+        if ("balanced".equals(preset)) return "medium";
+        if ("original".equals(preset)) return "ultra";
+        if ("super_low".equals(preset) || "low".equals(preset) || "medium".equals(preset)
+                || "high".equals(preset) || "ultra".equals(preset)) return preset;
         return fallback;
     }
 

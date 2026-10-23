@@ -13,6 +13,7 @@
 #include "generated/default/mcla_init.h"
 
 #include "mcla_app.h"
+#include "graphics_presets.h"
 
 #include <atomic>
 #include <cstdint>
@@ -37,9 +38,14 @@ REXCVAR_DEFINE_BOOL(mcla_fps_counter, true, "MCLA", "Show a compact FPS counter"
 REXCVAR_DEFINE_STRING(mcla_resolution, "540p", "MCLA",
                       "Guest resolution: 540p, 720p or 1080p (next start)")
     .allowed({"540p", "720p", "1080p"});
-REXCVAR_DEFINE_STRING(mcla_graphics_preset, "performance", "MCLA",
-                      "Graphics preset: performance, balanced or original")
-    .allowed({"performance", "balanced", "original"});
+#if defined(__ANDROID__)
+REXCVAR_DEFINE_STRING(mcla_graphics_preset, "medium", "MCLA",
+                      "Graphics preset: super_low, low, medium, high or ultra")
+#else
+REXCVAR_DEFINE_STRING(mcla_graphics_preset, "ultra", "MCLA",
+                      "Graphics preset: super_low, low, medium, high or ultra")
+#endif
+    .allowed({"super_low", "low", "medium", "high", "ultra", "performance", "balanced", "original"});
 REXCVAR_DEFINE_BOOL(mcla_settings_menu, true, "MCLA",
                     "Add the settings submenus to the pause menu");
 
@@ -405,8 +411,8 @@ constexpr const char* kPromptValues[] = {"auto", "xbox", "playstation"};
 constexpr const char* kPromptLabels[] = {"AUTO", "XBOX", "PLAYSTATION"};
 constexpr const char* kIntroValues[] = {"normal", "fast", "skip"};
 constexpr const char* kIntroLabels[] = {"NORMAL", "FAST", "SKIP (NO LOGO)"};
-constexpr const char* kGraphicsPresetValues[] = {"performance", "balanced", "original"};
-constexpr const char* kGraphicsPresetLabels[] = {"PERFORMANCE", "BALANCED", "ORIGINAL"};
+constexpr const char* kGraphicsPresetValues[] = {"super_low", "low", "medium", "high", "ultra"};
+constexpr const char* kGraphicsPresetLabels[] = {"SUPER LOW", "LOW", "MEDIUM", "HIGH", "ULTRA"};
 constexpr const char* kResolutionValues[] = {"540p", "720p", "1080p"};
 constexpr const char* kResolutionLabels[] = {"540P", "720P", "1080P"};
 
@@ -437,7 +443,7 @@ constexpr double kTrafficDistances[] = {100.0, 150.0, 200.0, 250.0, 325.0, 400.0
 
 const ItemDef kPerformanceItems[] = {
     {"PM_MxGraphicsPreset", ItemKind::kStringChoice, "mcla_graphics_preset", "GRAPHICS PRESET",
-     kGraphicsPresetValues, kGraphicsPresetLabels, nullptr, 3},
+     kGraphicsPresetValues, kGraphicsPresetLabels, nullptr, 5},
     {"PM_MxSingleTile", ItemKind::kToggle, "mcla_single_tile", "SINGLE TILE RENDERING"},
     {"PM_MxFenceYield", ItemKind::kToggle, "mcla_fence_yield", "GPU WAIT YIELD"},
     {"PM_MxShadows", ItemKind::kToggle, "mcla_shadows", "SHADOWS"},
@@ -510,6 +516,15 @@ std::string ItemValueLabel(const ItemDef& item, int index) {
 
 int ItemCurrentIndex(const ItemDef& item) {
   const std::string value = OptionGet(item.option);
+  if (std::strcmp(item.option, "mcla_graphics_preset") == 0) {
+    const auto* current = mcla::ResolveGraphicsPreset(value.c_str());
+    if (current) {
+      for (int i = 0; i < item.value_count; ++i) {
+        if (current == mcla::ResolveGraphicsPreset(item.values[i])) return i;
+      }
+    }
+    return 2;
+  }
   switch (item.kind) {
     case ItemKind::kToggle:
       return value == "true" ? 1 : 0;
@@ -541,26 +556,22 @@ int ItemCurrentIndex(const ItemDef& item) {
 std::atomic<bool> g_settings_dirty{false};
 
 void ApplyGraphicsPreset(const char* preset, bool mark_dirty = true) {
-  const bool performance = std::strcmp(preset, "performance") == 0;
-  const bool balanced = std::strcmp(preset, "balanced") == 0;
-  const char* quality = performance ? "0.25" : balanced ? "0.75" : "1.0";
-  const char* density = performance ? "0.0" : balanced ? "0.75" : "1.0";
-  const char* traffic_distance = performance ? "100" : balanced ? "325" : "400";
-
-  OptionSet("mcla_shadows", performance ? "false" : "true");
-  OptionSet("mcla_race_shadows", performance ? "false" : "true");
-  OptionSet("mcla_fast_car_shadows", performance ? "true" : "false");
-  OptionSet("mcla_foliage_shadows", performance || balanced ? "false" : "true");
-  OptionSet("mcla_city_lod", quality);
-  OptionSet("mcla_traffic_lod", quality);
-  OptionSet("mcla_traffic_distance", traffic_distance);
-  OptionSet("mcla_pedestrians", density);
-  OptionSet("mcla_parked_cars", density);
-  OptionSet("mcla_foliage_impostors", "true");
-  OptionSet("mcla_fullscreen_blur", performance ? "false" : "true");
-  OptionSet("mcla_msaa", performance || balanced ? "false" : "true");
-  OptionSet("mcla_motion_blur", performance ? "false" : "true");
-  OptionSet("mcla_depth_of_field", performance ? "false" : "true");
+  const auto* settings = mcla::ResolveGraphicsPreset(preset);
+  if (!settings) settings = mcla::ResolveGraphicsPreset("medium");
+  OptionSet("mcla_shadows", settings->shadows ? "true" : "false");
+  OptionSet("mcla_race_shadows", settings->race_shadows ? "true" : "false");
+  OptionSet("mcla_fast_car_shadows", settings->fast_car_shadows ? "true" : "false");
+  OptionSet("mcla_foliage_shadows", settings->foliage_shadows ? "true" : "false");
+  OptionSet("mcla_city_lod", settings->city_lod);
+  OptionSet("mcla_traffic_lod", settings->traffic_lod);
+  OptionSet("mcla_traffic_distance", settings->traffic_distance);
+  OptionSet("mcla_pedestrians", settings->pedestrians);
+  OptionSet("mcla_parked_cars", settings->parked_cars);
+  OptionSet("mcla_foliage_impostors", settings->foliage_impostors ? "true" : "false");
+  OptionSet("mcla_fullscreen_blur", settings->fullscreen_blur ? "true" : "false");
+  OptionSet("mcla_msaa", settings->msaa ? "true" : "false");
+  OptionSet("mcla_motion_blur", settings->motion_blur ? "true" : "false");
+  OptionSet("mcla_depth_of_field", settings->depth_of_field ? "true" : "false");
   if (mark_dirty) g_settings_dirty.store(true, std::memory_order_relaxed);
 }
 
@@ -951,9 +962,9 @@ void MclaApplyStartupSettings() {
   }
 
 #if defined(__ANDROID__)
-  // A launcher preset is stored as one cvar. Apply it only when no individual
-  // detail options were explicitly saved by the in-game menu.
-  if (rex::cvar::GetFlagSource("mcla_graphics_preset") != rex::cvar::Source::kDefault) {
+  // Apply the selected preset, including Medium on a fresh install, unless
+  // the in-game menu has saved individual detail options.
+  {
     constexpr const char* kDetailOptions[] = {
         "mcla_shadows", "mcla_race_shadows", "mcla_fast_car_shadows",
         "mcla_foliage_shadows", "mcla_city_lod", "mcla_traffic_lod",
@@ -964,11 +975,16 @@ void MclaApplyStartupSettings() {
         std::end(kDetailOptions), [](const char* name) {
           return rex::cvar::GetFlagSource(name) != rex::cvar::Source::kDefault;
         });
-    if (!details_were_saved) {
+    const bool preset_from_command_line = rex::cvar::GetFlagSource("mcla_graphics_preset") ==
+                                          rex::cvar::Source::kCommandLine;
+    if (!details_were_saved || preset_from_command_line) {
       const std::string preset = rex::cvar::GetFlagByName("mcla_graphics_preset");
-      if (preset == "performance" || preset == "balanced" || preset == "original") {
-        ApplyGraphicsPreset(preset.c_str(), false);
+      const auto* settings = mcla::ResolveGraphicsPreset(preset.c_str());
+      if (!settings) {
+        REXLOG_WARN("settings: invalid graphics preset '{}'; using medium", preset);
+        settings = mcla::ResolveGraphicsPreset("medium");
       }
+      ApplyGraphicsPreset(settings->name, false);
     }
   }
 #endif

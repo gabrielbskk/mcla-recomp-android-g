@@ -14,6 +14,7 @@ public final class AndroidSettingsTest {
         check(defaults.fpsCounter, "FPS counter must default to enabled");
         check(!defaults.performanceLogging, "performance logging must default to disabled");
         check("540p".equals(defaults.resolution), "resolution default must be 540p");
+        check("medium".equals(defaults.effects), "graphics preset must default to medium");
 
         Map<String, String> valid = new HashMap<>();
         valid.put("resolution", "720p");
@@ -26,20 +27,29 @@ public final class AndroidSettingsTest {
         check("720p".equals(parsed.resolution), "resolution parse");
         check(parsed.fpsLimit == 0, "uncapped FPS parse");
         check(!parsed.vsync, "vsync parse");
-        check("performance".equals(parsed.effects), "low effects alias");
+        check("low".equals(parsed.effects), "low preset remains distinct from super low");
         check(parsed.fpsCounter && parsed.performanceLogging, "boolean parse");
+
+        check("super_low".equals(AppSettings.parseEffects("performance", "medium")),
+                "legacy performance preset maps to super low");
+        check("medium".equals(AppSettings.parseEffects("balanced", "super_low")),
+                "legacy balanced preset maps to medium");
+        check("ultra".equals(AppSettings.parseEffects("original", "medium")),
+                "legacy original preset maps to ultra");
+        check("ultra".equals(AppSettings.parseEffects("ULTRA", "medium")),
+                "preset parsing is case-insensitive");
 
         Map<String, String> invalid = new HashMap<>();
         invalid.put("resolution", "8k");
         invalid.put("fps_limit", "900");
         invalid.put("vsync", "maybe");
-        invalid.put("effects", "ultra");
+        invalid.put("effects", "cinematic");
         invalid.put("fps_counter", "not-bool");
         AppSettings rejected = AppSettings.fromValues(invalid, defaults);
         check("540p".equals(rejected.resolution), "invalid resolution falls back");
         check(rejected.fpsLimit == defaults.fpsLimit, "invalid FPS falls back");
         check(rejected.vsync == defaults.vsync, "invalid vsync falls back");
-        check("performance".equals(rejected.effects), "invalid preset falls back");
+        check("medium".equals(rejected.effects), "invalid preset falls back to medium");
         check(rejected.fpsCounter, "invalid FPS counter retains enabled default");
 
         try {
@@ -52,7 +62,7 @@ public final class AndroidSettingsTest {
             persistedValues.put("resolution", "1080p");
             persistedValues.put("fps_limit", "60");
             persistedValues.put("vsync", "true");
-            persistedValues.put("effects", "balanced");
+            persistedValues.put("effects", "high");
             persistedValues.put("fps_counter", "false");
             persistedValues.put("performance_logging", "true");
             AppSettings saved = AppSettings.fromValues(persistedValues, defaults);
@@ -60,7 +70,7 @@ public final class AndroidSettingsTest {
             AppSettings restored = AppSettings.load(config);
             check("1080p".equals(restored.resolution), "saved resolution reloads");
             check(restored.fpsLimit == 60 && restored.vsync, "saved timing reloads");
-            check("balanced".equals(restored.effects), "saved preset reloads");
+            check("high".equals(restored.effects), "saved preset reloads");
             check(!restored.fpsCounter && restored.performanceLogging, "saved toggles reload");
             String contents = new String(java.nio.file.Files.readAllBytes(config.toPath()),
                     java.nio.charset.StandardCharsets.UTF_8);

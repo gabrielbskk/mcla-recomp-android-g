@@ -1,0 +1,31 @@
+name: Android Memory Patch Tests
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - fix/android-shared-memory-init
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-memory-patch-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  patch-tests:
+    name: Test ReXGlue Android memory patch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Android memory patch tests
+        run: python -m unittest discover -s tests -p 'test_android_memory_patch.py' -v

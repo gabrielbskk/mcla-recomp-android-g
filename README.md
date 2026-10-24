@@ -23,6 +23,8 @@ An experimental, community-made Android port of the Xbox 360 edition of *Midnigh
 
 | Guide | What it covers |
 |---|---|
+| [Contributing and forking](CONTRIBUTING.md) | Current development branch, local checks, dependencies and contribution boundaries |
+| [Engineering handoff](docs/contributing/HANDOFF.md) | Build reproducibility gaps, evidence map, diagnostic caveats and next experiments; Claude Code starts at `CLAUDE.md` |
 | [Android build and import guide](android/README.md) | Termux build steps, private data import, requirements, and limitations |
 | [Project status](docs/CONTINUITY_SUMMARY.md) | Current implementation, evidence limits, and open issues |
 | [Build history](docs/build-history/README.md) | Earlier Rust prototype, first C++ recompilation, and evidence by build stage |

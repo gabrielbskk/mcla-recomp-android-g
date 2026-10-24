@@ -84,7 +84,7 @@ android {
     ndkVersion '30.0.16248370'
 
     defaultConfig {
-        applicationId 'org.mcla.recomp'
+        applicationId 'org.mcla.recomp.openbeta'
         minSdk 26
         targetSdk 35
         versionCode 3

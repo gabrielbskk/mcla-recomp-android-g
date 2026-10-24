@@ -13,6 +13,8 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -44,33 +46,59 @@ final class DiagnosticsExporter {
         new Thread(() -> exportToTree(context.getApplicationContext(), destination), "mcla-previous-log-export").start();
     }
 
-    static String exportToTree(Context context, Uri treeUri) {
+    static synchronized String exportToTree(Context context, Uri treeUri) {
         try {
             List<File> logs = findLogs(context);
             Uri outputDirectory = resolveOutputDirectory(context, treeUri);
             for (File log : logs) {
                 try (InputStream input = new BufferedInputStream(new FileInputStream(log))) {
-                    writeDocument(context, treeUri, outputDirectory, "log-" + log.getName(), input);
+                    writeDocument(context, treeUri, outputDirectory, exportName(log), input);
                 }
             }
             String report = buildReport(context, logs);
             writeDocument(context, treeUri, outputDirectory, "diagnostics-latest.txt",
                     new java.io.ByteArrayInputStream(report.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-            return "Logs exportados para Documents/MCLA/logs (" + logs.size() + " arquivo(s)).";
+            return "Exported " + logs.size() + " log and performance file(s) to Documents/MCLA/logs.";
         } catch (Exception exception) {
             String message = exception.getMessage();
-            return "Não consegui exportar os logs: " + (message == null ? exception.toString() : message);
+            return "Log export failed: " + (message == null ? exception.toString() : message);
         }
     }
 
     private static List<File> findLogs(Context context) {
         File directory = new File(context.getFilesDir(), "mcla-recomp/logs");
-        File[] files = directory.listFiles(file -> file.isFile() && file.getName().endsWith(".log"));
+        File[] files = directory.listFiles(file -> file.isFile() && LogExportNaming.isLogArtifact(file.getName()));
         List<File> result = new ArrayList<>();
         if (files != null) result.addAll(java.util.Arrays.asList(files));
         result.sort(Comparator.comparingLong(File::lastModified));
-        if (result.size() > 3) return new ArrayList<>(result.subList(result.size() - 3, result.size()));
+        if (result.size() > 6) return new ArrayList<>(result.subList(result.size() - 6, result.size()));
         return result;
+    }
+
+    private static String exportName(File file) throws IOException {
+        try {
+            return LogExportNaming.stableExportName(file.getName(), sha256Prefix(file));
+        } catch (IllegalArgumentException exception) {
+            throw new IOException("Unsupported log artifact name: " + file.getName(), exception);
+        }
+    }
+
+    private static String sha256Prefix(File file) throws IOException {
+        final MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IOException("SHA-256 is unavailable.", exception);
+        }
+        byte[] buffer = new byte[64 * 1024];
+        try (InputStream input = new BufferedInputStream(new FileInputStream(file))) {
+            int count;
+            while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
+        }
+        byte[] bytes = digest.digest();
+        StringBuilder hex = new StringBuilder(bytes.length * 2);
+        for (byte value : bytes) hex.append(String.format(Locale.ROOT, "%02x", value & 0xff));
+        return hex.substring(0, 16);
     }
 
     private static String buildReport(Context context, List<File> logs) {
@@ -132,7 +160,7 @@ final class DiagnosticsExporter {
         Uri parent = DocumentsContract.buildDocumentUriUsingTree(tree, parentId);
         Uri created = DocumentsContract.createDocument(context.getContentResolver(), parent,
                 DocumentsContract.Document.MIME_TYPE_DIR, name);
-        if (created == null) throw new IOException("O provedor não criou a pasta " + name);
+        if (created == null) throw new IOException("The document provider did not create directory " + name);
         return DocumentsContract.getDocumentId(created);
     }
 
@@ -146,11 +174,12 @@ final class DiagnosticsExporter {
 
     private static void writeDocument(Context context, Uri tree, Uri parent, String name, InputStream input) throws IOException {
         Uri existing = findChild(context, tree, parent, name);
+        String mimeType = name.endsWith(".csv") ? "text/csv" : "text/plain";
         Uri outputUri = existing != null ? existing : DocumentsContract.createDocument(context.getContentResolver(), parent,
-                "text/plain", name);
-        if (outputUri == null) throw new IOException("Não consegui criar " + name);
+                mimeType, name);
+        if (outputUri == null) throw new IOException("Could not create " + name);
         try (OutputStream output = context.getContentResolver().openOutputStream(outputUri, "wt")) {
-            if (output == null) throw new IOException("Não consegui abrir " + name + " para escrita.");
+            if (output == null) throw new IOException("Could not open " + name + " for writing.");
             byte[] buffer = new byte[64 * 1024]; int count;
             while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
         }

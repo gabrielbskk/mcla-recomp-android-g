@@ -280,6 +280,529 @@ PIPELINE_CREATION_LOGS = (
     "  }",
 )
 
+ANDROID_MEMORY_BACKEND_PATCH = (
+    "#if REX_PLATFORM_ANDROID\n"
+    "  // TODO(Triang3l): Check if memfd can be used instead on API 30+.\n"
+    "  if (android_ASharedMemory_create_) {\n"
+    "    int sharedmem_fd = android_ASharedMemory_create_(path.c_str(), length);\n"
+    "    return sharedmem_fd >= 0 ? static_cast<FileMappingHandle>(sharedmem_fd)\n"
+    "                             : kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "\n"
+    "  // Use /dev/ashmem on API versions below 26, which added ASharedMemory.\n"
+    "  // /dev/ashmem was disabled on API 29 for apps targeting it.\n"
+    "  // https://chromium.googlesource.com/chromium/src/+/master/third_party/ashmem/ashmem-dev.c\n"
+    "  int ashmem_fd = open(\"/\" ASHMEM_NAME_DEF, O_RDWR);\n"
+    "  if (ashmem_fd < 0) {\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  char ashmem_name[ASHMEM_NAME_LEN];\n"
+    "  strlcpy(ashmem_name, path.c_str(), rex::countof(ashmem_name));\n"
+    "  if (ioctl(ashmem_fd, ASHMEM_SET_NAME, ashmem_name) < 0 ||\n"
+    "      ioctl(ashmem_fd, ASHMEM_SET_SIZE, length) < 0) {\n"
+    "    close(ashmem_fd);\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  return static_cast<FileMappingHandle>(ashmem_fd);\n"
+    "#else\n",
+    "#if REX_PLATFORM_ANDROID\n"
+    "  static std::once_flag android_memory_init_once;\n"
+    "  std::call_once(android_memory_init_once, AndroidInitialize);\n"
+    "  if (android_ASharedMemory_create_) {\n"
+    "    errno = 0;\n"
+    "    int sharedmem_fd = android_ASharedMemory_create_(path.c_str(), length);\n"
+    "    if (sharedmem_fd < 0) {\n"
+    "      const int error = errno;\n"
+    "      REXSYS_ERROR(\"ASharedMemory_create failed for {} ({} bytes): errno={} ({})\",\n"
+    "                   path.string(), length, error, std::strerror(error));\n"
+    "    } else {\n"
+    "      REXSYS_INFO(\"Android guest memory backing store created: provider=ASharedMemory_create, \"\n"
+    "                  \"name={}, bytes={}\", path.string(), length);\n"
+    "      return static_cast<FileMappingHandle>(sharedmem_fd);\n"
+    "    }\n"
+    "  }\n"
+    "\n"
+    "  // Use /dev/ashmem only when the API 26+ shared-memory function is unavailable.\n"
+    "  errno = 0;\n"
+    "  int ashmem_fd = open(\"/\" ASHMEM_NAME_DEF, O_RDWR);\n"
+    "  if (ashmem_fd < 0) {\n"
+    "    const int error = errno;\n"
+    "    REXSYS_ERROR(\"open(/dev/ashmem) failed for {} ({} bytes): errno={} ({})\",\n"
+    "                 path.string(), length, error, std::strerror(error));\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  char ashmem_name[ASHMEM_NAME_LEN];\n"
+    "  strlcpy(ashmem_name, path.c_str(), rex::countof(ashmem_name));\n"
+    "  if (ioctl(ashmem_fd, ASHMEM_SET_NAME, ashmem_name) < 0) {\n"
+    "    const int error = errno;\n"
+    "    REXSYS_ERROR(\"ashmem ASHMEM_SET_NAME failed for {}: errno={} ({})\",\n"
+    "                 path.string(), error, std::strerror(error));\n"
+    "    close(ashmem_fd);\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  errno = 0;\n"
+    "  if (ioctl(ashmem_fd, ASHMEM_SET_SIZE, length) < 0) {\n"
+    "    const int error = errno;\n"
+    "    REXSYS_ERROR(\"ashmem ASHMEM_SET_SIZE failed for {} ({} bytes): errno={} ({})\",\n"
+    "                 path.string(), length, error, std::strerror(error));\n"
+    "    close(ashmem_fd);\n"
+    "    return kFileMappingHandleInvalid;\n"
+    "  }\n"
+    "  REXSYS_INFO(\"Android guest memory backing store created: provider=ashmem, name={}, bytes={}\",\n"
+    "              path.string(), length);\n"
+    "  return static_cast<FileMappingHandle>(ashmem_fd);\n"
+    "#else\n",
+)
+
+ANDROID_MEMORY_INITIALIZER_PATCH = (
+    "void AndroidInitialize() {\n"
+    "  if (rex::GetAndroidApiLevel() >= 26) {\n"
+    "    libandroid_ = dlopen(\"libandroid.so\", RTLD_NOW);\n"
+    "    assert_not_null(libandroid_);\n"
+    "    if (libandroid_) {\n"
+    "      android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(\n"
+    "          dlsym(libandroid_, \"ASharedMemory_create\"));\n"
+    "      assert_not_null(android_ASharedMemory_create_);\n"
+    "    }\n"
+    "  }\n"
+    "}",
+    "void AndroidInitialize() {\n"
+    "  const int api_level = rex::GetAndroidApiLevel();\n"
+    "  if (api_level < 26) {\n"
+    "    REXSYS_WARN(\"ASharedMemory is unavailable on Android API {}; using ashmem fallback\",\n"
+    "                api_level);\n"
+    "    return;\n"
+    "  }\n"
+    "\n"
+    "  if (!libandroid_) {\n"
+    "    dlerror();\n"
+    "    libandroid_ = dlopen(\"libandroid.so\", RTLD_NOW);\n"
+    "  }\n"
+    "  if (!libandroid_) {\n"
+    "    const char* error = dlerror();\n"
+    "    REXSYS_ERROR(\"dlopen(libandroid.so) failed: {}\", error ? error : \"unknown error\");\n"
+    "    return;\n"
+    "  }\n"
+    "\n"
+    "  if (!android_ASharedMemory_create_) {\n"
+    "    dlerror();\n"
+    "    android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(\n"
+    "        dlsym(libandroid_, \"ASharedMemory_create\"));\n"
+    "    const char* error = dlerror();\n"
+    "    if (error || !android_ASharedMemory_create_) {\n"
+    "      REXSYS_ERROR(\"dlsym(ASharedMemory_create) failed: {}\",\n"
+    "                   error ? error : \"symbol not found\");\n"
+    "      android_ASharedMemory_create_ = nullptr;\n"
+    "      return;\n"
+    "    }\n"
+    "  }\n"
+    "  REXSYS_INFO(\"Android shared-memory backend initialized: API {} via ASharedMemory_create\",\n"
+    "              api_level);\n"
+    "}",
+)
+
+
+def patch_android_memory_initializer(text: str) -> str:
+    """Make AndroidInitialize safe after library-load preinitialization."""
+    original, patched = ANDROID_MEMORY_INITIALIZER_PATCH
+    if patched in text:
+        return text
+    if original in text:
+        return text.replace(original, patched, 1)
+
+    start = text.find("void AndroidInitialize() {")
+    if start < 0:
+        raise SystemExit("Expected one Android memory initializer in SDK source")
+    end = text.find("\n}\n", start)
+    if end < 0:
+        raise SystemExit("Android memory initializer has no closing brace")
+    end += len("\n}")
+    body = text[start:end]
+    if "if (!libandroid_) {" in body and "if (!android_ASharedMemory_create_) {" in body:
+        return text
+    old_load = (
+        '  dlerror();\n'
+        '  libandroid_ = dlopen("libandroid.so", RTLD_NOW);'
+    )
+    guarded_load = (
+        '  if (!libandroid_) {\n'
+        '    dlerror();\n'
+        '    libandroid_ = dlopen("libandroid.so", RTLD_NOW);\n'
+        '  }'
+    )
+    if body.count(old_load) != 1:
+        raise SystemExit("Unknown AndroidInitialize dlopen sequence in SDK source")
+    body = body.replace(old_load, guarded_load, 1)
+
+    old_lookup = (
+        '  dlerror();\n'
+        '  android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(\n'
+        '      dlsym(libandroid_, "ASharedMemory_create"));\n'
+        '  const char* error = dlerror();\n'
+        '  if (error || !android_ASharedMemory_create_) {\n'
+        '    REXSYS_ERROR("dlsym(ASharedMemory_create) failed: {}",\n'
+        '                 error ? error : "symbol not found");\n'
+        '    android_ASharedMemory_create_ = nullptr;\n'
+        '    return;\n'
+        '  }'
+    )
+    guarded_lookup = (
+        '  if (!android_ASharedMemory_create_) {\n'
+        '    dlerror();\n'
+        '    android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(\n'
+        '        dlsym(libandroid_, "ASharedMemory_create"));\n'
+        '    const char* error = dlerror();\n'
+        '    if (error || !android_ASharedMemory_create_) {\n'
+        '      REXSYS_ERROR("dlsym(ASharedMemory_create) failed: {}",\n'
+        '                   error ? error : "symbol not found");\n'
+        '      android_ASharedMemory_create_ = nullptr;\n'
+        '      return;\n'
+        '    }\n'
+        '  }'
+    )
+    if body.count(old_lookup) != 1:
+        raise SystemExit("Unknown AndroidInitialize dlsym sequence in SDK source")
+    body = body.replace(old_lookup, guarded_lookup, 1)
+    return text[:start] + body + text[end:]
+
+ANDROID_GUEST_MEMORY_ERROR_PATCH = (
+    'REXSYS_ERROR("Unable to reserve the 4gb guest address space.");',
+    'REXSYS_ERROR("Unable to create guest-memory backing store ({} bytes).", mapping_size);',
+)
+
+ANDROID_MEMORY_DIAGNOSTICS_HELPERS = r'''// MCLA_ANDROID_MEMFD_BACKEND: prepare the guest-memory backing store when
+// librexruntime is loaded (before SDL starts its native main thread).
+struct AndroidMemoryPreflightState {
+  int fd;
+  int provider;  // 1 = ASharedMemory, 2 = memfd.
+  int ashared_errno;
+  int memfd_errno;
+  int memfd_truncate_errno;
+  int rlimit_as_errno;
+  long ashared_result;
+  long memfd_result;
+  size_t size;
+  uint64_t rlimit_as_cur;
+  uint64_t rlimit_as_max;
+  uint64_t maps_entries;
+  char first_map[64];
+  char last_map[64];
+};
+static AndroidMemoryPreflightState android_memory_preflight = {};
+
+static size_t AndroidGuestMemoryBackingSize() {
+  long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) page_size = 4096;
+  const size_t granularity = static_cast<size_t>(page_size);
+  const size_t guest_size = static_cast<size_t>(0x120000000ull);
+  return ((guest_size + granularity + granularity - 1) / granularity) * granularity;
+}
+
+static void AndroidCaptureMemorySnapshot(AndroidMemoryPreflightState& state) {
+  struct rlimit limit = {};
+  if (getrlimit(RLIMIT_AS, &limit) == 0) {
+    state.rlimit_as_cur = limit.rlim_cur == RLIM_INFINITY ? UINT64_MAX : limit.rlim_cur;
+    state.rlimit_as_max = limit.rlim_max == RLIM_INFINITY ? UINT64_MAX : limit.rlim_max;
+  } else {
+    state.rlimit_as_errno = errno;
+  }
+  FILE* maps = std::fopen("/proc/self/maps", "r");
+  if (!maps) return;
+  char line[512];
+  while (std::fgets(line, sizeof(line), maps)) {
+    char range[64] = {};
+    if (std::sscanf(line, "%63s", range) == 1) {
+      if (state.maps_entries == 0) std::snprintf(state.first_map, sizeof(state.first_map), "%s", range);
+      std::snprintf(state.last_map, sizeof(state.last_map), "%s", range);
+      ++state.maps_entries;
+    }
+  }
+  std::fclose(maps);
+}
+
+static void AndroidPreinitializeGuestMemoryBacking() {
+  android_memory_preflight.fd = -1;
+  android_memory_preflight.ashared_result = -1;
+  android_memory_preflight.memfd_result = -1;
+  AndroidCaptureMemorySnapshot(android_memory_preflight);
+  android_memory_preflight.size = AndroidGuestMemoryBackingSize();
+
+  libandroid_ = dlopen("libandroid.so", RTLD_NOW);
+  if (libandroid_) {
+    android_ASharedMemory_create_ = reinterpret_cast<decltype(android_ASharedMemory_create_)>(
+        dlsym(libandroid_, "ASharedMemory_create"));
+    if (android_ASharedMemory_create_) {
+      errno = 0;
+      android_memory_preflight.ashared_result = android_ASharedMemory_create_(
+          "mcla-guest-memory", android_memory_preflight.size);
+      android_memory_preflight.ashared_errno =
+          android_memory_preflight.ashared_result < 0 ? errno : 0;
+      if (android_memory_preflight.ashared_result >= 0) {
+        android_memory_preflight.fd = static_cast<int>(android_memory_preflight.ashared_result);
+        android_memory_preflight.provider = 1;
+        return;
+      }
+    }
+  }
+
+  // memfd is available on Android 11+; it is also kept as the runtime fallback
+  // if ASharedMemory_create is unavailable or rejects this backing size.
+#if defined(SYS_memfd_create)
+  if (android_get_device_api_level() >= 30) {
+    errno = 0;
+    android_memory_preflight.memfd_result =
+        syscall(SYS_memfd_create, "mcla-guest-memory", MFD_CLOEXEC);
+    android_memory_preflight.memfd_errno =
+        android_memory_preflight.memfd_result < 0 ? errno : 0;
+    if (android_memory_preflight.memfd_result >= 0) {
+      if (ftruncate64(static_cast<int>(android_memory_preflight.memfd_result),
+                      static_cast<off64_t>(android_memory_preflight.size)) == 0) {
+        android_memory_preflight.fd = static_cast<int>(android_memory_preflight.memfd_result);
+        android_memory_preflight.provider = 2;
+        return;
+      }
+      android_memory_preflight.memfd_truncate_errno = errno;
+      close(static_cast<int>(android_memory_preflight.memfd_result));
+    }
+  }
+#endif
+}
+
+__attribute__((constructor)) static void AndroidPreinitializeGuestMemoryBackingAtLoad() {
+  AndroidPreinitializeGuestMemoryBacking();
+}
+
+static const char* AndroidPreflightProviderName() {
+  return android_memory_preflight.provider == 1 ? "ASharedMemory_create" :
+         android_memory_preflight.provider == 2 ? "memfd_create" : "none";
+}
+
+static void AndroidLogMemoryDiagnostics(const std::filesystem::path& path, size_t bytes) {
+  AndroidMemoryPreflightState current = {};
+  AndroidCaptureMemorySnapshot(current);
+  REXSYS_INFO("Android guest-memory preflight: stage=library_load provider={} result_fd={} "
+              "bytes={} ASharedMemory_create_result={} errno={} ({}) "
+              "memfd_create_result={} errno={} ({}) ftruncate64_errno={} ({}) "
+              "RLIMIT_AS={}/{} rlimit_errno={} maps_entries={} first={} last={}",
+              AndroidPreflightProviderName(), android_memory_preflight.fd,
+              android_memory_preflight.size, android_memory_preflight.ashared_result,
+              android_memory_preflight.ashared_errno,
+              std::strerror(android_memory_preflight.ashared_errno),
+              android_memory_preflight.memfd_result, android_memory_preflight.memfd_errno,
+              std::strerror(android_memory_preflight.memfd_errno),
+              android_memory_preflight.memfd_truncate_errno,
+              std::strerror(android_memory_preflight.memfd_truncate_errno),
+              android_memory_preflight.rlimit_as_cur, android_memory_preflight.rlimit_as_max,
+              android_memory_preflight.rlimit_as_errno,
+              android_memory_preflight.maps_entries, android_memory_preflight.first_map,
+              android_memory_preflight.last_map);
+  REXSYS_INFO("Android guest-memory request: name={} bytes={} stage=Runtime::Setup "
+              "RLIMIT_AS={}/{} maps_entries={} first={} last={}", path.string(), bytes,
+              current.rlimit_as_cur, current.rlimit_as_max, current.maps_entries,
+              current.first_map, current.last_map);
+}
+'''
+
+ANDROID_GUEST_MAP_FAILURE_PATCH = (
+    "    if (!views_.all_views[n]) {\n"
+    "      // Failed, so bail and try again.\n"
+    "      UnmapViews();\n"
+    "      return 1;\n"
+    "    }",
+    "    if (!views_.all_views[n]) {\n"
+    "      const int error = errno;\n"
+    "      const uintptr_t target_address = reinterpret_cast<uintptr_t>(\n"
+    "          mapping_base + map_info[n].virtual_address_start);\n"
+    "      const size_t view_size = map_info[n].virtual_address_end -\n"
+    "                               map_info[n].virtual_address_start + 1;\n"
+    "      const size_t file_offset = map_info[n].target_address & granularity_mask;\n"
+    "      REXSYS_ERROR(\"Guest memory map attempt failed: base=0x{:016X}, view={}, \"\n"
+    "                   \"addr=0x{:016X}, size=0x{:X}, offset=0x{:X}, \"\n"
+    "                   \"flags=MAP_SHARED|MAP_FIXED, prot=RW, errno={} ({})\",\n"
+    "                   reinterpret_cast<uintptr_t>(mapping_base), n, target_address, view_size,\n"
+    "                   file_offset, error, std::strerror(error));\n"
+    "      UnmapViews();\n"
+    "      return 1;\n"
+    "    }",
+)
+
+ANDROID_GUEST_MAP_SUCCESS_PATCH = (
+    "  REXSYS_INFO(\"Guest memory arena mapped: virtual base 0x{:016X}, physical base 0x{:016X}\",\n"
+    "              reinterpret_cast<uintptr_t>(virtual_membase_),\n"
+    "              reinterpret_cast<uintptr_t>(physical_membase_));",
+    "  REXSYS_INFO(\"Guest memory arena mapped: views={}, virtual base 0x{:016X}, physical base 0x{:016X}\",\n"
+    "              rex::countof(views_.all_views),\n"
+    "              reinterpret_cast<uintptr_t>(virtual_membase_),\n"
+    "              reinterpret_cast<uintptr_t>(physical_membase_));",
+)
+ANDROID_GUEST_MAP_SUCCESS_PATCH_LEGACY = ANDROID_GUEST_MAP_SUCCESS_PATCH[1].replace(
+    "rex::countof(views_.all_views)", "views_.all_views.size()"
+)
+
+ANDROID_MAP_FILE_ERRNO_PATCH = (
+    "  if (file_offset % page != 0) {\n"
+    "    return nullptr;\n"
+    "  }",
+    "  if (file_offset % page != 0) {\n"
+    "    errno = EINVAL;\n"
+    "    return nullptr;\n"
+    "  }",
+)
+
+ANDROID_MAP_FILE_MISMATCH_PATCH = (
+    "  if (base_address && result != base_address) {\n"
+    "    munmap(result, length);\n"
+    "    return nullptr;\n"
+    "  }",
+    "  if (base_address && result != base_address) {\n"
+    "    munmap(result, length);\n"
+    "    errno = EINVAL;\n"
+    "    return nullptr;\n"
+    "  }",
+)
+
+
+def patch_android_memory_backend(text: str) -> str:
+    """Initialize Android shared memory lazily and report backing-store errors."""
+    original, patched = ANDROID_MEMORY_BACKEND_PATCH
+    if patched not in text:
+        if text.count(original) == 1:
+            text = text.replace(original, patched, 1)
+        elif "ASharedMemory_create failed for" not in text:
+            raise SystemExit("Expected one Android file-mapping backend block; SDK may have changed")
+
+    if "MCLA_ANDROID_MEMFD_BACKEND" not in text:
+        declaration = "static int (*android_ASharedMemory_create_)(const char* name, size_t size);\n"
+        if text.count(declaration) != 1:
+            raise SystemExit("Expected one Android shared-memory function pointer declaration")
+        text = text.replace(declaration, declaration + ANDROID_MEMORY_DIAGNOSTICS_HELPERS, 1)
+    elif "ASharedMemory_create_result" not in text:
+        helper_start = text.find("// MCLA_ANDROID_MEMFD_BACKEND:")
+        helper_end = text.find("void AndroidInitialize()", helper_start)
+        if helper_start < 0 or helper_end < 0:
+            raise SystemExit("Could not upgrade the previous Android memory diagnostics helper")
+        text = text[:helper_start] + ANDROID_MEMORY_DIAGNOSTICS_HELPERS + "\n\n" + text[helper_end:]
+
+    # Older outputs returned immediately when ASharedMemory_create failed,
+    # making the memfd fallback below unreachable on precisely that failure.
+    old_shared_failure = (
+        '      REXSYS_ERROR("ASharedMemory_create failed for {} ({} bytes): errno={} ({})",\n'
+        '                   path.string(), length, error, std::strerror(error));\n'
+        '      return kFileMappingHandleInvalid;\n'
+        '    }\n'
+        '    REXSYS_INFO("Android guest memory backing store created: provider=ASharedMemory_create, "\n'
+        '                "name={}, bytes={}", path.string(), length);\n'
+        '    return static_cast<FileMappingHandle>(sharedmem_fd);'
+    )
+    new_shared_failure = (
+        '      REXSYS_ERROR("ASharedMemory_create failed for {} ({} bytes): errno={} ({})",\n'
+        '                   path.string(), length, error, std::strerror(error));\n'
+        '    } else {\n'
+        '      REXSYS_INFO("Android guest memory backing store created: provider=ASharedMemory_create, "\n'
+        '                  "name={}, bytes={}", path.string(), length);\n'
+        '      return static_cast<FileMappingHandle>(sharedmem_fd);\n'
+        '    }'
+    )
+    if old_shared_failure in text:
+        text = text.replace(old_shared_failure, new_shared_failure, 1)
+    elif "ASharedMemory_create failed for" in text and "memfd_create failed for" in text:
+        pass
+
+    if "AndroidLogMemoryDiagnostics(path, length);" not in text:
+        call_anchor = "  std::call_once(android_memory_init_once, AndroidInitialize);\n"
+        if text.count(call_anchor) != 1:
+            raise SystemExit("Expected one Android file-mapping initialization call")
+        text = text.replace(call_anchor,
+                            call_anchor + "  AndroidLogMemoryDiagnostics(path, length);\n", 1)
+
+    if "MCLA_ANDROID_USE_PRECREATED_BACKING" not in text:
+        precreated_anchor = "  AndroidLogMemoryDiagnostics(path, length);\n"
+        use_precreated = (
+            "  // MCLA_ANDROID_USE_PRECREATED_BACKING\n"
+            "  if (android_memory_preflight.fd >= 0 && android_memory_preflight.size == length) {\n"
+            "    const int fd = android_memory_preflight.fd;\n"
+            "    android_memory_preflight.fd = -1;\n"
+            "    REXSYS_INFO(\"Android guest memory backing store created: provider={}, bytes={}, stage=library_load\",\n"
+            "                AndroidPreflightProviderName(), length);\n"
+            "    return static_cast<FileMappingHandle>(fd);\n"
+            "  }\n"
+            "  if (android_memory_preflight.fd >= 0) {\n"
+            "    close(android_memory_preflight.fd);\n"
+            "    android_memory_preflight.fd = -1;\n"
+            "  }\n"
+        )
+        if text.count(precreated_anchor) != 1:
+            raise SystemExit("Expected one Android memory diagnostic call")
+        text = text.replace(precreated_anchor, precreated_anchor + use_precreated, 1)
+
+    if "memfd_create failed for" not in text:
+        ashmem_anchor = (
+            "  // Use /dev/ashmem only when the API 26+ shared-memory function is unavailable.\n"
+            "  errno = 0;\n"
+            "  int ashmem_fd = open(\"/\" ASHMEM_NAME_DEF, O_RDWR);\n"
+        )
+        memfd_fallback = (
+            "  // Android 11+ fallback if early creation did not produce a usable descriptor.\n"
+            "#if defined(SYS_memfd_create)\n"
+            "  if (android_get_device_api_level() >= 30) {\n"
+            "    errno = 0;\n"
+            "    const long memfd = syscall(SYS_memfd_create, \"mcla-guest-memory\", MFD_CLOEXEC);\n"
+            "    if (memfd < 0) {\n"
+            "      const int error = errno;\n"
+            "      REXSYS_ERROR(\"memfd_create failed for {} ({} bytes): errno={} ({})\",\n"
+            "                   path.string(), length, error, std::strerror(error));\n"
+            "    } else if (ftruncate64(static_cast<int>(memfd), static_cast<off64_t>(length)) < 0) {\n"
+            "      const int error = errno;\n"
+            "      REXSYS_ERROR(\"ftruncate64(memfd) failed for {} ({} bytes): errno={} ({})\",\n"
+            "                   path.string(), length, error, std::strerror(error));\n"
+            "      close(static_cast<int>(memfd));\n"
+            "    } else {\n"
+            "      REXSYS_INFO(\"Android guest memory backing store created: provider=memfd_create, "
+            "bytes={}\", length);\n"
+            "      return static_cast<FileMappingHandle>(memfd);\n"
+            "    }\n"
+            "  }\n"
+            "#endif\n"
+        )
+        if text.count(ashmem_anchor) != 1:
+            raise SystemExit("Expected one Android ashmem fallback point")
+        text = text.replace(ashmem_anchor, memfd_fallback + ashmem_anchor, 1)
+    return text
+
+
+def patch_android_guest_maps(text: str) -> str:
+    """Record one failed guest view per candidate base and the final mapped-view count."""
+    text = text.replace(ANDROID_GUEST_MAP_SUCCESS_PATCH_LEGACY, ANDROID_GUEST_MAP_SUCCESS_PATCH[1])
+    for original, patched in (ANDROID_GUEST_MAP_FAILURE_PATCH, ANDROID_GUEST_MAP_SUCCESS_PATCH):
+        if patched in text:
+            continue
+        if text.count(original) != 1:
+            raise SystemExit("Expected one guest-memory mapping diagnostic point; SDK may have changed")
+        text = text.replace(original, patched, 1)
+    return text
+
+
+def patch_android_map_file_errno(text: str) -> str:
+    """Preserve errno for invalid mmap inputs and unexpected fixed-address results."""
+    for original, patched in (ANDROID_MAP_FILE_ERRNO_PATCH, ANDROID_MAP_FILE_MISMATCH_PATCH):
+        if patched in text:
+            continue
+        if text.count(original) != 1:
+            raise SystemExit("Expected one POSIX file-view mapping validation point; SDK may have changed")
+        text = text.replace(original, patched, 1)
+    return text
+
+
+def patch_android_chrono_header(text: str) -> str:
+    """Apply or recognize the Android chrono shim, including an extended libc++ variant."""
+    original, patched = ANDROID_CHRONO_FALLBACK_PATCH
+    if (patched in text or ANDROID_CHRONO_EXTENDED_LIBCPP_PATCH in text
+            or ANDROID_CHRONO_SDK_ANDROID_PATCH in text):
+        return text
+    if text.count(original) != 1:
+        raise SystemExit("Expected one C++20 clock-cast compatibility point; SDK may have changed")
+    return text.replace(original, patched, 1)
+
 TEXTURE_CACHE_MEMORY_SAMPLE = (
     "  if (destroyed_any) {\n"
     "    COUNT_profile_set(\"gpu/texture_cache/textures\", textures_.size());\n"
@@ -394,6 +917,23 @@ HOST_FILE_MAPPED_TRACE_PATCH = (
     "  return mapped;",
 )
 
+
+def patch_android_host_entry(text: str) -> str:
+    """Add I/O tracing while accepting the older result-bearing trace format."""
+    markers = (
+        "android io trace open path=",
+        "android io trace open_mapped path=",
+    )
+    for (original, patched), marker in zip(
+        (HOST_FILE_OPEN_TRACE_PATCH, HOST_FILE_MAPPED_TRACE_PATCH), markers
+    ):
+        if patched in text or marker in text:
+            continue
+        if text.count(original) != 1:
+            raise SystemExit("Expected one Android host-file I/O trace point; SDK may have changed")
+        text = text.replace(original, patched, 1)
+    return text
+
 HOST_FILE_READ_TRACE_PATCH = (
     "  if (file_handle_->Read(byte_offset, buffer.data(), buffer.size(), out_bytes_read)) {\n"
     "    return X_STATUS_SUCCESS;",
@@ -417,6 +957,15 @@ ANDROID_CHRONO_FALLBACK_PATCH = (
     "// Apple and Android libc++ do not expose clock_time_conversion or clock_cast.",
 )
 
+ANDROID_CHRONO_EXTENDED_LIBCPP_PATCH = (
+    "#if defined(__APPLE__) || defined(__ANDROID__) || "
+    "(defined(__linux__) && defined(_LIBCPP_VERSION))"
+)
+ANDROID_CHRONO_SDK_ANDROID_PATCH = (
+    "#if defined(__APPLE__) || defined(__ANDROID__)\n"
+    "// Apple and Android NDK libc++ do not expose clock_time_conversion or clock_cast."
+)
+
 
 
 def main() -> None:
@@ -428,29 +977,65 @@ def main() -> None:
     if not source.is_file():
         raise SystemExit(f"ReXGlue Vulkan source not found: {source}")
 
+    memory_source = args.sdk / "src/core/memory_posix.cpp"
+    if not memory_source.is_file():
+        raise SystemExit(f"ReXGlue POSIX memory backend not found: {memory_source}")
+    memory_text = memory_source.read_text(encoding="utf-8")
+    include_anchor = "#include <sys/ioctl.h>\n"
+    if memory_text.count(include_anchor) != 1:
+        raise SystemExit(f"Expected one Android memory include point in {memory_source}")
+    android_memory_includes = (
+        "#include <android/api-level.h>\n"
+        "#include <linux/memfd.h>\n"
+        "#include <mutex>\n"
+        "#include <sys/resource.h>\n"
+        "#include <sys/syscall.h>\n"
+        "#include <sys/types.h>\n"
+    )
+    for include in android_memory_includes.splitlines(keepends=True):
+        if include not in memory_text:
+            memory_text = memory_text.replace(include_anchor, include_anchor + include, 1)
+    memory_text = patch_android_memory_initializer(memory_text)
+    memory_text = patch_android_memory_backend(memory_text)
+    memory_text = patch_android_map_file_errno(memory_text)
+    if memory_text != memory_source.read_text(encoding="utf-8"):
+        memory_source.write_text(memory_text, encoding="utf-8")
+        print("Initialized ASharedMemory on demand and added errno diagnostics for guest-memory creation.")
+    else:
+        print("Android guest-memory initialization and diagnostics are already applied.")
+
+    guest_memory_source = args.sdk / "src/system/xmemory.cpp"
+    if not guest_memory_source.is_file():
+        raise SystemExit(f"ReXGlue guest memory source not found: {guest_memory_source}")
+    guest_memory_text = guest_memory_source.read_text(encoding="utf-8")
+    original_guest_memory_text = guest_memory_text
+    original, patched = ANDROID_GUEST_MEMORY_ERROR_PATCH
+    if patched not in guest_memory_text:
+        if guest_memory_text.count(original) != 1:
+            raise SystemExit(f"Expected one guest-memory backing-store failure message in {guest_memory_source}")
+        guest_memory_text = guest_memory_text.replace(original, patched, 1)
+    guest_memory_text = patch_android_guest_maps(guest_memory_text)
+    if guest_memory_text != original_guest_memory_text:
+        guest_memory_source.write_text(guest_memory_text, encoding="utf-8")
+        print("Added guest-memory mapping success/failure diagnostics.")
+    else:
+        print("Guest-memory backing-store and mapping diagnostics are already applied.")
+
     chrono_header = args.sdk / "include/rex/chrono/chrono.h"
     chrono_text = chrono_header.read_text(encoding="utf-8")
-    original, patched = ANDROID_CHRONO_FALLBACK_PATCH
-    if patched not in chrono_text:
-        if chrono_text.count(original) != 1:
-            raise SystemExit(f"Expected one C++20 clock-cast compatibility point in {chrono_header}")
-        chrono_header.write_text(chrono_text.replace(original, patched, 1), encoding="utf-8")
+    patched_chrono_text = patch_android_chrono_header(chrono_text)
+    if patched_chrono_text != chrono_text:
+        chrono_header.write_text(patched_chrono_text, encoding="utf-8")
         print("Enabled ReXGlue's chrono compatibility shim for Android libc++.")
     else:
         print("Android libc++ chrono compatibility shim is already applied.")
 
     host_entry = args.sdk / "src/filesystem/devices/host_path_entry.cpp"
     host_entry_text = host_entry.read_text(encoding="utf-8")
-    entry_changed = False
-    for original, patched in (HOST_FILE_OPEN_TRACE_PATCH, HOST_FILE_MAPPED_TRACE_PATCH):
-        if patched in host_entry_text:
-            continue
-        if host_entry_text.count(original) != 1:
-            raise SystemExit(f"Expected one host-file I/O trace insertion point in {host_entry}")
-        host_entry_text = host_entry_text.replace(original, patched, 1)
-        entry_changed = True
+    patched_host_entry_text = patch_android_host_entry(host_entry_text)
+    entry_changed = patched_host_entry_text != host_entry_text
     if entry_changed:
-        host_entry.write_text(host_entry_text, encoding="utf-8")
+        host_entry.write_text(patched_host_entry_text, encoding="utf-8")
         print("Added Android host-file open and mapped-file trace records.")
     else:
         print("Android host-file open tracing is already applied.")
@@ -471,33 +1056,6 @@ def main() -> None:
     else:
         print("Android host-file read tracing is already applied.")
     host_file.write_text(host_file_text, encoding="utf-8")
-
-    host_entry = args.sdk / "src/filesystem/devices/host_path_entry.cpp"
-    host_entry_text = host_entry.read_text(encoding="utf-8")
-    entry_changed = False
-    for original, patched in (HOST_FILE_OPEN_TRACE_PATCH, HOST_FILE_MAPPED_TRACE_PATCH):
-        if patched in host_entry_text:
-            continue
-        if host_entry_text.count(original) != 1:
-            raise SystemExit(f"Expected one host-file I/O trace insertion point in {host_entry}")
-        host_entry_text = host_entry_text.replace(original, patched, 1)
-        entry_changed = True
-    if entry_changed:
-        host_entry.write_text(host_entry_text, encoding="utf-8")
-        print("Added Android host-file open and mapped-file trace records.")
-    else:
-        print("Android host-file open tracing is already applied.")
-
-    host_file = args.sdk / "src/filesystem/devices/host_path_file.cpp"
-    host_file_text = host_file.read_text(encoding="utf-8")
-    original, patched = HOST_FILE_READ_TRACE_PATCH
-    if patched not in host_file_text:
-        if host_file_text.count(original) != 1:
-            raise SystemExit(f"Expected one host-file read trace insertion point in {host_file}")
-        host_file.write_text(host_file_text.replace(original, patched, 1), encoding="utf-8")
-        print("Added Android host-file byte-count trace records.")
-    else:
-        print("Android host-file read tracing is already applied.")
 
     pipeline_cache = args.sdk / "src/graphics/vulkan/pipeline_cache.cpp"
     if not pipeline_cache.is_file():

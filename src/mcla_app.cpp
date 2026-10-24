@@ -1,8 +1,10 @@
 #include "generated/default/mcla_init.h"
 
 #include "mcla_app.h"
+#include "render_metrics.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -10,13 +12,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
-#include <map>
-#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 #if defined(__ANDROID__)
 #include <SDL3/SDL_system.h>
-#include <unistd.h>
 #endif
 
 #include <imgui.h>
@@ -31,9 +31,8 @@
 #include <rex/ui/imgui_drawer.h>
 #include <rex/ui/windowed_app_context.h>
 
-#if defined(__ANDROID__)
-double MclaAndroidGuestTickRate();
-#endif
+REXCVAR_DEFINE_BOOL(mcla_perf_logging, false, "MCLA",
+                    "Write one-second render performance summaries to private storage");
 
 namespace {
 
@@ -41,6 +40,109 @@ std::atomic<MclaApp*> g_mcla_app{nullptr};
 #if defined(__ANDROID__)
 std::string g_android_settings_path;
 std::string g_android_path_diagnostics;
+std::string g_android_perf_log_path;
+constexpr size_t kPerfFrameRingSize = 4096;
+std::array<std::atomic<float>, kPerfFrameRingSize> g_perf_frame_times_ms{};
+std::atomic<uint64_t> g_perf_frame_sequence{0};
+std::atomic<bool> g_perf_log_enabled{false};
+std::atomic<bool> g_perf_log_stop{false};
+std::thread g_perf_log_thread;
+
+void RotatePerformanceLog(const std::filesystem::path& path) {
+  std::error_code error;
+  if (!std::filesystem::exists(path, error) || error ||
+      std::filesystem::file_size(path, error) < 10u * 1024u * 1024u || error) return;
+  std::filesystem::remove(path.string() + ".2", error);
+  error.clear();
+  std::filesystem::rename(path.string() + ".1", path.string() + ".2", error);
+  error.clear();
+  std::filesystem::rename(path, path.string() + ".1", error);
+}
+
+void StartAndroidPerformanceLog() {
+  if (rex::cvar::GetFlagByName("mcla_perf_logging") != "true" ||
+      g_android_perf_log_path.empty() || g_perf_log_thread.joinable()) return;
+  g_perf_log_enabled.store(true, std::memory_order_release);
+  g_perf_log_stop.store(false, std::memory_order_release);
+  const std::filesystem::path path(g_android_perf_log_path);
+  g_perf_log_thread = std::thread([path] {
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    RotatePerformanceLog(path);
+    const bool has_content = std::filesystem::exists(path, error) &&
+                             std::filesystem::file_size(path, error) > 0;
+    std::ofstream output(path, std::ios::app);
+    if (!output) {
+      REXLOG_ERROR("performance log: cannot open {}", path.string());
+      g_perf_log_enabled.store(false, std::memory_order_release);
+      return;
+    }
+    if (!has_content) {
+      output << "elapsed_s,draw_fps,frame_ms_avg,frame_ms_p50,frame_ms_p95,frame_ms_p99,"
+                "frame_ms_max,frames_over_50ms,fence_submit_wait_ms,fence_readback_wait_ms,"
+                "fence_acquire_wait_ms\n";
+      output.flush();
+    }
+    using Clock = std::chrono::steady_clock;
+    const auto process_started = Clock::now();
+    auto last_flush = Clock::now();
+    uint64_t last_sequence = g_perf_frame_sequence.load(std::memory_order_acquire);
+    while (!g_perf_log_stop.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      const auto now = Clock::now();
+      if (now - last_flush < std::chrono::seconds(1)) continue;
+      const uint64_t sequence = g_perf_frame_sequence.load(std::memory_order_acquire);
+      const uint64_t available = sequence - last_sequence;
+      const uint64_t count = std::min<uint64_t>(available, kPerfFrameRingSize);
+      std::vector<float> samples;
+      samples.reserve(static_cast<size_t>(count));
+      const uint64_t first = sequence - count;
+      for (uint64_t index = first; index < sequence; ++index) {
+        const float sample = g_perf_frame_times_ms[index % kPerfFrameRingSize].load(
+            std::memory_order_relaxed);
+        samples.push_back(sample);
+      }
+      const double elapsed = std::chrono::duration<double>(now - last_flush).count();
+      const auto summary = mcla::perf::SummarizeFrameTimes(samples, elapsed);
+      output << std::fixed << std::setprecision(3) << std::chrono::duration<double>(
+          now - process_started).count() << ',' << summary.draws_per_second << ','
+             << summary.mean_ms << ',' << summary.p50_ms << ',' << summary.p95_ms << ','
+             << summary.p99_ms << ',' << summary.max_ms << ',' << summary.over_50ms
+             << ",unavailable,unavailable,unavailable\n";
+      output.flush();
+      last_sequence = sequence;
+      last_flush = now;
+      std::error_code size_error;
+      if (output && std::filesystem::file_size(path, size_error) >= 10u * 1024u * 1024u &&
+          !size_error) {
+        output.close();
+        RotatePerformanceLog(path);
+        output.open(path, std::ios::app);
+        if (!output) {
+          REXLOG_ERROR("performance log: could not reopen {} after rotation", path.string());
+          break;
+        }
+      }
+    }
+    output.flush();
+    g_perf_log_enabled.store(false, std::memory_order_release);
+  });
+}
+
+void StopAndroidPerformanceLog() {
+  g_perf_log_stop.store(true, std::memory_order_release);
+  if (g_perf_log_thread.joinable()) g_perf_log_thread.join();
+  g_perf_log_enabled.store(false, std::memory_order_release);
+}
+
+void RecordAndroidRenderFrame(double frame_ms) {
+  if (!g_perf_log_enabled.load(std::memory_order_relaxed)) return;
+  if (!std::isfinite(frame_ms) || frame_ms <= 0.0) return;
+  const uint64_t sequence = g_perf_frame_sequence.load(std::memory_order_relaxed);
+  g_perf_frame_times_ms[sequence % kPerfFrameRingSize].store(static_cast<float>(frame_ms),
+                                                              std::memory_order_relaxed);
+  g_perf_frame_sequence.store(sequence + 1, std::memory_order_release);
+}
 #endif
 
 class FpsCounterDialog final : public rex::ui::ImGuiDialog {
@@ -50,21 +152,23 @@ class FpsCounterDialog final : public rex::ui::ImGuiDialog {
   void SetOverlayVisible(bool visible) { overlay_visible_ = visible; }
 
  protected:
-  void OnDraw(ImGuiIO& io) override {
-    if (!(io.DeltaTime > 0.0f) || !std::isfinite(io.DeltaTime)) {
-      return;
+  void OnDraw(ImGuiIO& /*io*/) override {
+    using Clock = std::chrono::steady_clock;
+    const double now_seconds = std::chrono::duration<double>(Clock::now().time_since_epoch()).count();
+    mcla::perf::DrawRateSnapshot snapshot;
+    if (draw_rate_.RecordDraw(now_seconds, &snapshot)) {
+      measured_draw_fps_ = snapshot.draws_per_second;
+      measured_mean_frame_ms_ = snapshot.mean_frame_ms;
+      has_measurement_ = true;
     }
-    const float instant_fps = 1.0f / io.DeltaTime;
-    smoothed_fps_ = smoothed_fps_ > 0.0f ? smoothed_fps_ * 0.85f + instant_fps * 0.15f
-                                         : instant_fps;
 #if defined(__ANDROID__)
-    RecordPerformanceSample(io.DeltaTime);
+    RecordAndroidRenderFrame(draw_rate_.last_frame_ms());
 #endif
     if (!overlay_visible_) {
       return;
     }
-    ImGui::SetNextWindowPos(ImVec2(16.0f, 16.0f), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.60f);
+    ImGui::SetNextWindowPos(ImVec2(12.0f, 12.0f), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.45f);
     constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoDecoration |
                                         ImGuiWindowFlags_NoInputs |
                                         ImGuiWindowFlags_AlwaysAutoResize |
@@ -72,186 +176,26 @@ class FpsCounterDialog final : public rex::ui::ImGuiDialog {
                                         ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("MCLA FPS", nullptr, kFlags)) {
 #if defined(__ANDROID__)
-      ImGui::Text("UI FPS: %.0f", smoothed_fps_);
-      const double game_tick_rate = MclaAndroidGuestTickRate();
-      if (game_tick_rate > 0.0) {
-        ImGui::Text("Game ticks/s: %.1f", game_tick_rate);
+      ImGui::SetWindowFontScale(0.82f);
+      if (has_measurement_) {
+        ImGui::Text("DRAW FPS: %.0f  |  %.1f ms", measured_draw_fps_, measured_mean_frame_ms_);
       } else {
-        ImGui::Text("Game ticks/s: --");
+        ImGui::Text("DRAW FPS: --  |  FRAME: -- ms");
       }
+      ImGui::SetWindowFontScale(1.0f);
 #else
-      ImGui::Text("FPS: %.0f", smoothed_fps_);
+      ImGui::Text("DRAW FPS: %.0f", measured_draw_fps_);
 #endif
     }
     ImGui::End();
   }
 
  private:
-#if defined(__ANDROID__)
-  static uint64_t ReadVmRssKiB() {
-    std::ifstream status("/proc/self/status");
-    std::string line;
-    while (std::getline(status, line)) {
-      if (line.compare(0, 6, "VmRSS:") == 0) {
-        std::istringstream value_stream(line.substr(6));
-        uint64_t rss_kib = 0;
-        value_stream >> rss_kib;
-        return rss_kib;
-      }
-    }
-    return 0;
-  }
-
-  struct ThreadCpuSample {
-    std::string name;
-    uint64_t ticks = 0;
-  };
-
-  static std::map<uint64_t, ThreadCpuSample> ReadThreadCpuSamples() {
-    std::map<uint64_t, ThreadCpuSample> samples;
-    const long ticks_per_second = sysconf(_SC_CLK_TCK);
-    if (ticks_per_second <= 0) {
-      return samples;
-    }
-    std::error_code error;
-    for (std::filesystem::directory_iterator it("/proc/self/task", error), end;
-         !error && it != end; it.increment(error)) {
-      const std::string tid_text = it->path().filename().string();
-      uint64_t tid = 0;
-      try {
-        tid = std::stoull(tid_text);
-      } catch (...) {
-        continue;
-      }
-      std::ifstream stat(it->path() / "stat");
-      std::string line;
-      if (!std::getline(stat, line)) {
-        continue;
-      }
-      // The command name is parenthesized and may itself contain spaces or
-      // parentheses, so parse the numeric fields only after its final ')'.
-      const size_t command_end = line.rfind(')');
-      if (command_end == std::string::npos || command_end + 1 >= line.size()) {
-        continue;
-      }
-      std::istringstream fields(line.substr(command_end + 1));
-      std::string field;
-      uint64_t user_ticks = 0;
-      uint64_t system_ticks = 0;
-      // The remaining fields start at field 3 (state); utime/stime are 14/15.
-      for (int index = 0; index <= 12; ++index) {
-        if (!(fields >> field)) {
-          break;
-        }
-        if (index == 11) {
-          try {
-            user_ticks = std::stoull(field);
-          } catch (...) {
-            user_ticks = 0;
-          }
-        } else if (index == 12) {
-          try {
-            system_ticks = std::stoull(field);
-          } catch (...) {
-            system_ticks = 0;
-          }
-        }
-      }
-      if (!user_ticks && !system_ticks) {
-        continue;
-      }
-      std::ifstream comm(it->path() / "comm");
-      std::string name;
-      std::getline(comm, name);
-      samples.emplace(tid, ThreadCpuSample{std::move(name), user_ticks + system_ticks});
-    }
-    return samples;
-  }
-
-  void RecordThreadCpuSample(std::chrono::steady_clock::time_point now) {
-    const auto current = ReadThreadCpuSamples();
-    if (thread_cpu_sample_started_ == std::chrono::steady_clock::time_point{}) {
-      thread_cpu_previous_ = current;
-      thread_cpu_sample_started_ = now;
-      return;
-    }
-    const double elapsed =
-        std::chrono::duration<double>(now - thread_cpu_sample_started_).count();
-    const long ticks_per_second = sysconf(_SC_CLK_TCK);
-    if (elapsed <= 0.0 || ticks_per_second <= 0) {
-      thread_cpu_previous_ = current;
-      thread_cpu_sample_started_ = now;
-      return;
-    }
-
-    struct BusyThread {
-      std::string name;
-      uint64_t tid;
-      double cpu_percent;
-    };
-    std::vector<BusyThread> busy;
-    for (const auto& [tid, sample] : current) {
-      const auto previous = thread_cpu_previous_.find(tid);
-      if (previous == thread_cpu_previous_.end() || sample.ticks < previous->second.ticks) {
-        continue;
-      }
-      const double cpu_percent =
-          100.0 * double(sample.ticks - previous->second.ticks) / double(ticks_per_second) / elapsed;
-      busy.push_back({sample.name, tid, cpu_percent});
-    }
-    std::sort(busy.begin(), busy.end(), [](const BusyThread& a, const BusyThread& b) {
-      return a.cpu_percent > b.cpu_percent;
-    });
-    std::ostringstream top;
-    const size_t count = std::min<size_t>(5, busy.size());
-    for (size_t i = 0; i < count; ++i) {
-      if (i) {
-        top << ", ";
-      }
-      top << busy[i].name << "#" << busy[i].tid << "=" << std::fixed << std::setprecision(1)
-          << busy[i].cpu_percent << "%";
-    }
-    REXLOG_INFO("android thread CPU (one core=100%): {}", top.str());
-    thread_cpu_previous_ = current;
-    thread_cpu_sample_started_ = now;
-  }
-
-  void RecordPerformanceSample(float delta_time) {
-    using Clock = std::chrono::steady_clock;
-    const auto now = Clock::now();
-    if (sample_started_ == Clock::time_point{}) {
-      sample_started_ = now;
-      RecordThreadCpuSample(now);
-    }
-    ++sample_frames_;
-    frame_times_ms_.push_back(delta_time * 1000.0f);
-    const double elapsed_seconds = std::chrono::duration<double>(now - sample_started_).count();
-    if (elapsed_seconds < 10.0 || frame_times_ms_.empty()) {
-      return;
-    }
-
-    std::sort(frame_times_ms_.begin(), frame_times_ms_.end());
-    const size_t p95_index = std::min(
-        frame_times_ms_.size() - 1,
-        static_cast<size_t>(std::ceil(static_cast<double>(frame_times_ms_.size()) * 0.95)) - 1);
-    REXLOG_INFO("android perf: render-loop estimate {:.1f} FPS, frame p95 {:.1f} ms, "
-                "max {:.1f} ms, VmRSS {} KiB",
-                static_cast<double>(sample_frames_) / elapsed_seconds,
-                frame_times_ms_[p95_index], frame_times_ms_.back(), ReadVmRssKiB());
-    RecordThreadCpuSample(now);
-    frame_times_ms_.clear();
-    sample_frames_ = 0;
-    sample_started_ = now;
-  }
-
-  std::chrono::steady_clock::time_point sample_started_{};
-  uint64_t sample_frames_ = 0;
-  std::vector<float> frame_times_ms_;
-  std::chrono::steady_clock::time_point thread_cpu_sample_started_{};
-  std::map<uint64_t, ThreadCpuSample> thread_cpu_previous_;
-#endif
   bool overlay_visible_ = false;
-  float smoothed_fps_ = 0.0f;
+  mcla::perf::DrawRateWindow draw_rate_;
+  double measured_draw_fps_ = 0.0;
+  double measured_mean_frame_ms_ = 0.0;
+  bool has_measurement_ = false;
 };
 
 }  // namespace
@@ -278,6 +222,9 @@ MclaApp::~MclaApp() {
   touch_controls_dialog_.reset();
   fps_counter_dialog_.reset();
   fps_drawer_ = nullptr;
+#if defined(__ANDROID__)
+  StopAndroidPerformanceLog();
+#endif
 }
 
 void MclaApp::OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) {
@@ -348,6 +295,7 @@ void MclaApp::OnConfigurePaths(rex::PathConfig& paths) {
     }
     create_error.clear();
     const auto log_dir = app_data / "logs";
+    g_android_perf_log_path = (log_dir / "performance-v2.csv").string();
     std::filesystem::create_directories(log_dir, create_error);
     if (create_error) {
       if (!g_android_path_diagnostics.empty()) g_android_path_diagnostics += "; ";
@@ -393,6 +341,7 @@ void MclaApp::OnPostInitLogging() {
 
 void MclaApp::OnPreSetup(rex::RuntimeConfig& config) {
 #if defined(__ANDROID__)
+  MclaApplyStartupSettings();
   // Avoid the scaled guest-clock path on Android. The SDK's vblank worker
   // subtracts guest timestamps as unsigned values; using the monotonic host
   // clock directly avoids the clock-rebase underflow documented upstream.
@@ -421,6 +370,7 @@ void MclaApp::OnPreSetup(rex::RuntimeConfig& config) {
 void MclaApp::OnPostSetup() {
   ConfigureFrameTiming();
 #if defined(__ANDROID__)
+  StartAndroidPerformanceLog();
   REXLOG_INFO(
       "android settings: backend={}, preset={}, guest={}x{}, fps={}, shadows={}, city_lod={}, "
       "traffic_lod={}, traffic_distance={}, pedestrians={}, parked_cars={}, single_tile={}, "

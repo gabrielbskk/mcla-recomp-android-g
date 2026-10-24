@@ -7,8 +7,10 @@
 *.pe
 *.bin
 *.god
+nxeart
+root_directory_padding.pad
 /private/
-/game/
+/game
 /extracted/
 /dump/
 /generated/*
@@ -17,6 +19,22 @@
 # Keys
 *.key
 keys.*
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+.env
+.env.*
+!.env.example
+
+# Installable packages and user-owned game archives
+*.apk
+*.aab
+*.xapk
+*.obb
+game*.zip
+mcla-*.zip
 
 # Build output
 /build/
@@ -30,19 +48,26 @@ keys.*
 *.exe
 *.dll
 *.so
+*.dex
+*.class
 /third_party/
 /tools/
 /out/
 *.log
+*.logcat
+logcat*.txt
+diagnostics-*.txt
+performance*.csv
+tombstone*
 
 # The play shortcut scripts/make_pc.ps1 makes
 *.lnk
 
-# Ad-hoc notes remain local; the maintained V8 continuity handoff is tracked.
+# Ad-hoc notes remain local; only explicitly maintained project documentation is tracked.
 /docs/*.md
 !/docs/CONTINUITY_SUMMARY.md
 !/docs/OTHER_PLATFORMS_HISTORICAL.md
-# Game screenshots and extracted artwork stay on the maintainer's netbook.
+# Screenshots and extracted artwork are intentionally excluded from the source tree.
 /docs/images/
 /REFLECTION_FIX.md
 /ps5/probes/
@@ -65,3 +90,12 @@ keys.*
 /android/app/build/
 /android/app/.cxx/
 /android/app/src/main/assets/gpu_drivers/
+
+# Python test/runtime scratch files
+__pycache__/
+*.py[cod]
+
+# Local agent context and audit history; never publish these files.
+/agent.md
+/memory.md
+/.brooks-lint-history.json

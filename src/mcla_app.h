@@ -46,3 +46,4 @@ class MclaApp : public rex::ReXApp {
 };
 
 void MclaRequestFpsCounter(bool visible);
+void MclaApplyStartupSettings();

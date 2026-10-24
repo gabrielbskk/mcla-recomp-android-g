@@ -1,0 +1,7 @@
+function(mcla_enable_android_io_trace)
+    foreach(target IN ITEMS rexruntime rexfilesystem)
+        if(TARGET ${target})
+            target_compile_definitions(${target} PRIVATE MCLA_ANDROID_IO_TRACE=1)
+        endif()
+    endforeach()
+endfunction()

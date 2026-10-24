@@ -8,7 +8,7 @@ This guide describes the Android ARM64 Open Beta (`0.1.2-experimental`, `version
 - The launcher offers **Import ZIP**, **Import extracted folder**, an optional `.bik` video checkbox, **Export logs**, and an ISO picker. Xbox 360 XGD ISO images are not extracted by the app.
 - A user test reached car selection. An I/O-trace capture recorded a failed open of `intro720.bik`, followed by continued execution; it recorded no attempt to open `nxeart` or `root_directory_padding.pad`. This does not prove that every `.bik` file can be omitted.
 - That trace did not record `xarchive_audio.rpf` or `xarchive_music.rpf` before car selection. The import validator still requires all five configured files.
-- The maintainer reports severe stutter and low performance. The on-screen metric counts draw callbacks, not completed Vulkan presents; it is not a reliable presented-FPS counter. No 30 FPS result or performance improvement is verified.
+- The maintainer reports severe stutter and low performance. This source revision records successful Vulkan queue presentations (`VK_SUCCESS` and `VK_SUBOPTIMAL_KHR`) for the overlay and optional performance log. No 30 FPS result or performance improvement is verified until measured on-device.
 - The latest user test reports that gamepad input was not recognized and that preset/resolution changes were not visibly confirmed. These remain open issues.
 
 ## Import and storage
@@ -39,7 +39,7 @@ Runtime logs stay in the app-private directory and rotate. **Export logs** asks 
 
 The launcher settings include guest resolution (540p/720p/1080p), FPS limit, V-Sync, graphics preset, FPS counter, and optional performance logging. They use the private `filesDir/mcla-recomp/userdata/mcla.toml` consumed by ReXGlue; the in-game menu uses the same cvars. The FPS counter defaults to enabled, including on fresh installs. The graphics preset defaults to **Medium** and offers **Super Low**, **Low**, **Medium**, **High**, and **Ultra**. Legacy `performance`, `balanced`, and `original` values map to Super Low, Medium, and Ultra.
 
-The overlay reports draw-callbacks per second and mean frame time. It does not measure completed Vulkan presents because this build does not hook the renderer's present path. The optional worker-thread log writes one-second `draw_fps`, average/p50/p95/p99/max frame time, and frames over 50 ms to `filesDir/mcla-recomp/logs/performance-v2.csv`. Submit/readback/acquire fence-wait columns remain unavailable until the renderer exports those counters. Guest game-timer ticks are reported separately in the runtime log.
+The overlay reports successful Vulkan presentations per second and presented frame-time p50/p95/p99. The optional worker-thread log writes rolling one-second `presented_fps`, presentation count, average/p50/p95/p99/max frame time, and frames over 50 ms to `filesDir/mcla-recomp/logs/performance-v3.csv`. Submit/readback/acquire fence-wait columns remain unavailable until the renderer exports those counters. Guest game-timer ticks are reported separately in the runtime log.
 
 The Android app's own labels, import messages, driver status, and diagnostics are in English. Android's system file picker may follow the device language. Game dialogue and other game-authored assets retain the language in the imported files; no runtime language-switch option was found in this project.
 
@@ -72,4 +72,4 @@ See [the two-observation note](../docs/testing/android-ui-last-two-observations-
 
 ## Compatibility and performance
 
-This build has no verified presented-FPS measurement or 30 FPS result. Low guest tick rates and severe stalls have been reported, but those figures are not render FPS. Mali G52/G57, Xclipse, and other GPUs have not been validated with this version.
+The revised present counter and per-resolution measurements require device validation; this change alone does not establish a FPS gain or 30 FPS. Low guest tick rates and severe stalls were reported in earlier tests, but those figures are not presented FPS. Mali G52/G57, Xclipse, and other GPUs have not been validated with this version.

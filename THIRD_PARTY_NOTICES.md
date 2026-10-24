@@ -20,11 +20,21 @@ Commons Compress versions and licenses above follow its published 1.28.0 depende
 
 SDL's Java sources are modified project copies of upstream SDL Android glue. They remain identifiable as SDL code; project changes must not be presented as original SDL work. `docs/OTHER_PLATFORMS_HISTORICAL.md` is historical documentation, not a claim that this Android fork supports those platforms.
 
-Additional work used with permission from LARecomp is attributed in the affected source files, including `src/settings_menu.cpp`, `src/perf_options.cpp`, and `src/frame_timing.cpp`. Game data, artwork, music, and other copyrighted game assets are not included here.
+## LARecomp license check
 
-## Redistribution clearance still required
+Checked the `main` tree of [`mzzvxm/LARecomp` at commit `aa43aa991e204e2d4e10d046cecf652e4cea417a`](https://github.com/mzzvxm/LARecomp/tree/aa43aa991e204e2d4e10d046cecf652e4cea417a) on 2026-10-23. No `LICENSE`, `LICENSE.md`, or `COPYING` file is present in that commit's tree: **licença não declarada**. Therefore no license type, notice requirement, or copyleft obligation can be attributed to LARecomp from a repository license file. **LARecomp (commit aa43aa9): nenhum LICENSE encontrado; permissão de redistribuição não confirmada.** Source comments in this project say the author granted permission, but this checkout does not establish its scope for public source or binary redistribution. Do not treat the root GPL license as covering LARecomp-derived material.
 
-The LARecomp repository does not currently display a license in its GitHub repository metadata. This project’s source comments attribute specific adaptations and state that permission was given, but they do not define the permission's scope or establish the license for redistribution. Before making this repository or a binary containing those adaptations public, retain explicit written permission that covers public source and binary redistribution and confirm the licensing terms for those files. Do not assume the root GPL-3.0-only license overrides third-party rights.
+Files explicitly marked as a port or adaptation from LARecomp:
+
+- `src/settings_menu.cpp` and `config/settings_menu.toml` — pause-menu implementation and hook layout.
+- `src/warp_fix.cpp` — warper hook adaptation.
+- `src/button_prompts.cpp` and `config/ui.toml` — controller-prompt mechanism and hook configuration.
+
+Other files attribute technical analysis or hook addresses, without claiming a copied code passage: `src/frame_timing.cpp`, `config/frame_timing.toml`, `src/perf_options.cpp`, `config/perf_options.toml`, and `config/render_perf.toml`. `src/mcla_app.cpp` only notes a similar symbolic-link behavior. These attributions identify provenance; they do not resolve redistribution rights. Game data, artwork, music, and other copyrighted game assets are not included here.
+
+## Remaining redistribution question
+
+Written confirmation covering the public source and adapted binaries is still needed, or the project must remove/replace the LARecomp-derived portions before claiming those materials are cleared for redistribution. The source repository and prior beta are already public; this check does not retroactively establish permission for them. Do not infer a permissive license or a copyleft license where the upstream `LICENSE` file is absent.
 
 This inventory is based on the checked-in source and the configured ReXGlue v0.10.0 dependency. Verify the exact resolved SDK submodules, native link map, and APK contents when producing a distributable binary; this document is not a substitute for that artifact-specific check.
 

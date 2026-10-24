@@ -28,4 +28,6 @@ Use small, descriptive commits (for example, `fix(android): validate imported ar
 
 ## Security and Licensing
 
-Never commit game data, saves, APK/XAPK/OBB files, signing material, credentials, build outputs, or raw logs containing personal information. Preserve third-party notices and check `THIRD_PARTY_NOTICES.md` when adding dependencies or redistributing binaries. The game and its assets are not included or licensed by this project.
+The repository `gabrielbskk/mcla-recomp-android-g` is public by the owner's decision. Never change its visibility, publish a release, or delete a release without explicit authorization.
+
+Never commit signing keys or keystores, tokens, `.env` files, game data (`.xex`, `.rpf`, `.bik`, `nxeart`), OBB/XAPK files, shader or pipeline caches, or logs containing personal data. Before each push, inspect `.gitignore` and list the files that will be sent. Preserve third-party notices. Before redistributing code or binaries adapted from a third-party project (including LARecomp), inspect that project's original `LICENSE` and record the result in `THIRD_PARTY_NOTICES.md`. The game and its assets are not included or licensed by this project.

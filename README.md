@@ -6,7 +6,7 @@
 
 An experimental, community-made Android port of the Xbox 360 edition of *Midnight Club: Los Angeles Complete Edition*. This fork focuses on running the recompiled C++ game natively on Android ARM64, with development and testing centered on a Samsung Galaxy S23 using Termux.
 
-**This project is experimental and its Open Beta is not a stable release.** A user test reached car selection, but reported severe stutter, unrecognized gamepad input, and no clearly visible effect from graphics/resolution settings. The on-screen metric counts draw callbacks, not completed Vulkan presents. No 30 FPS result is verified, and other devices and GPUs have not been validated.
+**This project is experimental and its Open Beta is not a stable release.** A user test reached car selection, but reported severe stutter, unrecognized gamepad input, and no clearly visible effect from graphics/resolution settings. The current source branch records successful Vulkan queue presentations, but it has not yet been rebuilt and validated on the phone. No 30 FPS result is verified, and other devices and GPUs have not been validated.
 
 ## Project at a glance
 
@@ -23,9 +23,12 @@ An experimental, community-made Android port of the Xbox 360 edition of *Midnigh
 
 | Guide | What it covers |
 |---|---|
+| [Contributing and forking](CONTRIBUTING.md) | Current development branch, local checks, dependencies and contribution boundaries |
+| [Engineering handoff](docs/contributing/HANDOFF.md) | Build reproducibility gaps, evidence map, diagnostic caveats and next experiments; Claude Code starts at `CLAUDE.md` |
 | [Android build and import guide](android/README.md) | Termux build steps, private data import, requirements, and limitations |
 | [Project status](docs/CONTINUITY_SUMMARY.md) | Current implementation, evidence limits, and open issues |
 | [Build history](docs/build-history/README.md) | Earlier Rust prototype, first C++ recompilation, and evidence by build stage |
+| [Android port research snapshot](docs/research/android-xbox-recomp-survey-2026-10-23.txt) | Dated comparison of related Android recompilation and emulation projects; external claims are not MCLA benchmarks |
 | [Launcher observations](docs/testing/android-ui-last-two-observations-2026-10-23.md) | What the two latest UI screenshots do and do not prove |
 | [Historical platform notes](docs/OTHER_PLATFORMS_HISTORICAL.md) | Archived Windows/Linux/PS5 documentation, not active support for this fork |
 
@@ -44,12 +47,12 @@ ReXGlue statically recompiles Xbox 360 PowerPC code into C++, and supplies runti
 - [SDL](https://github.com/libsdl-org/SDL) — SDL3 Android Java glue and native platform library; SDL is distributed under the zlib license.
 - [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) — the recompilation toolkit and runtime used by this project. See its repository for its contributors and license.
 - [Xenia](https://github.com/xenia-project/xenia) — acknowledged by ReXGlue as foundational upstream work for parts of its runtime. It is a reference in the dependency lineage, not a claim that this Android fork contains a separate Xenia port.
-- [LARecomp](https://github.com/mzzvxm/LARecomp) — the source file comments identify specific menu, timing, performance-analysis, and warp-fix work adapted from LARecomp, with permission attributed there to its author. The affected files retain those attributions.
+- [LARecomp](https://github.com/mzzvxm/LARecomp) — some menu, warper, controller-prompt, timing, and performance work is adapted from or informed by this project; affected files retain provenance comments. The LARecomp `main` tree at commit [`aa43aa991e204e2d4e10d046cecf652e4cea417a`](https://github.com/mzzvxm/LARecomp/tree/aa43aa991e204e2d4e10d046cecf652e4cea417a) contains no `LICENSE`, `LICENSE.md`, or `COPYING` file: **licença não declarada**. **LARecomp (commit aa43aa9): nenhum LICENSE encontrado; permissão de redistribuição não confirmada.** No license type or copyleft terms are inferred. See [Third-Party Notices](THIRD_PARTY_NOTICES.md) for the affected files and remaining clearance question.
 - [libadrenotools](https://github.com/bylaws/libadrenotools) — included as a Git submodule for optional Android GPU-driver integration. Its presence does not mean a custom driver is required or enabled on every device; the app has a system-driver fallback.
 
 The versions and license texts for components included in source or Android builds are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The Android package contains third-party runtime code; keep that notice with any redistributed APK.
 
-The repository's source package ID has been aligned with the experimental Open Beta ID. The existing hosted APK has not been rebuilt from this working source update; rebuild it and distribute the matching third-party notices before treating any new binary as a release. LARecomp-derived files also require redistribution terms to be confirmed; see the clearance note in `THIRD_PARTY_NOTICES.md`.
+The repository's source package ID has been aligned with the experimental Open Beta ID. The existing hosted APK has not been rebuilt from this working source update. The successful-present counter and its ReXGlue patch are source changes on the development branch, not a verified APK feature. LARecomp redistribution terms remain unconfirmed; do not treat this documentation as a license grant.
 
 These credits describe references or components evidenced in this repository. They do not imply that this Android fork is a port of, or supported by, the Windows, Linux, or PS5 builds documented elsewhere in the former shared README. Archived platform notes, retained only as historical context, are in [OTHER_PLATFORMS_HISTORICAL.md](docs/OTHER_PLATFORMS_HISTORICAL.md).
 

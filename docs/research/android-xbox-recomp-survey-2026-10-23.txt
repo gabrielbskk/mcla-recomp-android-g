@@ -1,0 +1,118 @@
+RELATORIO MCLA ANDROID — PROBLEMAS DO PORT E REFERENCIAS
+Data: 2026-10-23
+Escopo: resumo do estado conhecido do MCLA e pesquisa comparativa de ports/emuladores. Pesquisa somente leitura; nenhum arquivo do repositório foi alterado e nenhum APK foi instalado/testado nesta etapa.
+
+IMPORTANTE
+As estrelas e releases abaixo são uma fotografia aproximada da consulta em 2026-10-23 e podem mudar. Desempenho citado é relato/documentação dos próprios projetos, salvo indicação; não é benchmark independente nem resultado do MCLA. “Não achei” significa que não encontrei evidência nas páginas consultadas, não prova de inexistência.
+
+1. PROBLEMAS DO PORT MCLA
+
+Confirmado ou relatado pelo usuário
+- Desempenho muito baixo e travamentos/engasgos durante o jogo. O jogo chegou à seleção de carros, mas isso não significa que a corrida esteja jogável. Não há medição controlada atual de FPS que permita quantificar o gargalo.
+- Gamepad não foi reconhecido em teste do usuário. A causa e uma correção comprovada ainda não foram estabelecidas.
+- O contador de FPS/tempo de quadro foi percebido como “fake”/pouco confiável; presets gráficos e resolução pareceram não mudar o resultado. A implementação conta chamadas vkQueuePresentKHR bem-sucedidas/subótimas, não comprova o momento físico de scanout do display. Não há validação controlada no aparelho mostrando que extras/configuração alterem a renderização.
+- Há relatos anteriores de congelamento, ANR/crash e carregamento demorado. Não há, neste material, logcat recente que associe cada ocorrência a uma causa específica.
+- Controles touch tiveram relato de parar de responder durante uso de controle físico; não há reprodução controlada nem causa confirmada.
+- Compatibilidade em Mali, Xclipse, Adreno diferentes do 740 e aparelhos Android variados não está demonstrada. O único alvo de referência é o Galaxy S23/Adreno 740.
+
+Resolvido historicamente, mas sem revalidar nesta tarefa
+- A falha anterior de reserva de memória guest de aproximadamente 4,5 GiB (mensagem “Unable to reserve the 4gb guest address space”, C0000001) foi superada em uma build posterior: o registro de continuidade relata ASharedMemory_create bem-sucedido e chegada à seleção de carros. Isso não prova que o fallback memfd foi exercitado nem cobre falhas de memória em outros aparelhos.
+
+Falta evidência para fechar diagnóstico
+- Não há perfil controlado que separe custo de CPU, GPU, leitura de assets, readback, espera de submit/acquire ou compilação fria de pipelines.
+- Os tempos de fence-wait por origem ainda constam como indisponíveis no log de desempenho do código consultado.
+- Não foi feita aqui comparação de 1080p/720p/540p com duração fixa, nem execução fria versus aquecida; portanto não se pode dizer se reduzir resolução aumenta FPS.
+- Não há rastreio repetido de arquivos abertos até uma cena de jogo que feche a necessidade de .bik, nxeart, root_directory_padding.pad, xarchive_audio.rpf ou xarchive_music.rpf.
+- Não foi comprovada persistência do VkPipelineCache Vulkan do driver. O cache existente do projeto não equivale automaticamente a VkPipelineCache persistente.
+- Não foi provado ganho de FPS por preset, resolução, cache, afinidade de CPU ou qualquer outra otimização.
+
+Leitura do código local (checkout com alterações pendentes; não representa necessariamente o APK instalado)
+- src/render_metrics.h:61-113 implementa janela/estatísticas de apresentações e percentis de frame time.
+- src/mcla_app.cpp:83-103 grava métricas; os campos de espera submit/readback/acquire estão indisponíveis no registro consultado. Linhas 132-137 alimentam timestamps do contador.
+- scripts/patch_android_present_metrics.py:49-55 instrumenta VK_SUCCESS e VK_SUBOPTIMAL_KHR de vkQueuePresentKHR. Isso mede apresentações aceitas pela API, não confirmação independente de scanout.
+- scripts/patch_android_rexglue.py:135-159 altera o tratamento de frames incompletos para permitir compilação assíncrona; não prova melhora de FPS.
+- Não foram encontradas chamadas vkCreatePipelineCache/vkGetPipelineCacheData no código MCLA consultado. O cache já existente é de outro tipo (shaders/descrições de pipeline), não prova cache Vulkan do driver.
+- docs/CONTINUITY_SUMMARY.md:18, 22-24 registra chegada à seleção de carros, presets/resolução sem diferença clara percebida e falta de validação de métricas/compatibilidade.
+
+2. PROJETOS MAIS RELEVANTES: RECOMPILAÇÃO ESTÁTICA / XBOX 360
+
+Pinyon Shift — https://github.com/arcanite24/pinyon-shift
+Atividade/release: v0.6.1 (21 out. 2026); cerca de 876 estrelas; BSD-3-Clause. Recompilação estática de Forza Horizon/ShiftGlue com Vulkan. Há medições documentadas em Adreno 740: a documentação compara tempos de GPU por configuração e descreve análise de EDRAM, shaders, readback e pipelines frios. Também documenta quedas térmicas em outro SoC. São dados do projeto, não previsão de ganho para MCLA. Técnicas úteis: medição separada de fases, buffer/readback, pipelines e shaders em workers, caches e redução de contenção. Fontes: https://github.com/arcanite24/pinyon-shift/blob/main/docs/ANDROID.md ; https://github.com/arcanite24/pinyon-shift/blob/main/docs/ANDROID_ODIN_BACKLOG.md
+
+NFSMW-Recompiled-Mobile — https://github.com/victorgbd/NFSMW-Recompiled-Mobile
+Atividade/release: v0.5.3 (19 out. 2026); cerca de 180 estrelas; GPL-3.0. Oferece caminho Xenos/ReXGlue e também renderer nativo separado. O projeto documenta medições em Snapdragon 8 Elite/Adreno 830 e análise de contagem de draws e resolves; alguns resultados são específicos a hooks/título e não devem ser transplantados cegamente para MCLA. Há referência a CPU-bound e diferenças entre drivers. Fontes: https://github.com/victorgbd/NFSMW-Recompiled-Mobile/releases ; https://github.com/victorgbd/NFSMW-Recompiled-Mobile/blob/main/docs/android.md
+
+mw2-android — https://github.com/OpenPort-Labs/mw2-android
+Atividade/release: v0.0.2-alpha (18 out. 2026); cerca de 161 estrelas; GPL-3.0-only. Recompilação estática Xbox 360 em Android ARM64/Vulkan. Documenta cache persistente de pipelines/shaders, compilação em workers e aquecimento com orçamento de boot; informa compatibilidade pretendida em várias GPUs, mas a página consultada não apresenta benchmark por dispositivo que comprove FPS universal. Fontes: https://github.com/OpenPort-Labs/mw2-android/releases ; https://github.com/OpenPort-Labs/mw2-android/blob/master/docs/android.md
+
+UnleashedRecomp-Android — https://github.com/SansNope/UnleashedRecomp-Android
+Atividade/release: v0.6.1 (10 out. 2026); cerca de 227 estrelas; GPL-3.0. Recompilação estática Xbox 360, Android/Vulkan. O projeto relata resultado de GPU em Adreno 830 e compara driver do sistema/Turnip; não encontrei medição equivalente em Adreno 740. Fonte: https://github.com/SansNope/UnleashedRecomp-Android/releases/tag/v0.6.1
+
+Skate3-Mobile — https://github.com/Buku313/Skate3-Mobile
+Atividade/release: v2.1.0 DEV (15 set. 2026); estrelas: não achei com confiança; licença: sem licença declarada no root consultado. ReXGlue/SDL3/Vulkan. A documentação relata funcionamento em RG406V/Mali G57, sem FPS numérico verificável. Fontes: https://github.com/Buku313/Skate3-Mobile/releases ; https://github.com/Buku313/Skate3-Mobile/blob/main/android/README.md
+
+NFS Carbon 360 Android Recomp — https://github.com/codepdbh/NFS-CARBON-360-ANDROID-RECOMP
+Atividade consultada: README atualizado em outubro de 2026; cerca de 93 estrelas; GPL-3.0. Projeto experimental ReXGlue; README relata carros/cenário/menus no renderer nativo de outro port e cerca de 60 FPS em S25 Ultra/Adreno 830 a 720p/1080p. Isso não é medição do renderer Xenos nem corrida completa; APK/release público não confirmado. Fonte: https://github.com/codepdbh/NFS-CARBON-360-ANDROID-RECOMP
+
+LARecomp — https://github.com/mzzvxm/LARecomp
+Cerca de 200 estrelas; licença: sem licença declarada; recompilação estática do MCLA para Windows x86-64, não encontrei Android/APK. É referência do mesmo jogo, mas não solução Android comprovada. Fonte: https://github.com/mzzvxm/LARecomp
+
+CrownParkComputing/Xbox360-Native-Ports — https://github.com/CrownParkComputing/Xbox360-Native-Ports
+Cerca de 158 estrelas; licença não declarada no root consultado; atividade recente. Ports nativos desktop e documentação de mudanças ReXGlue; sem build Android/APK e sem benchmark Android. Não redistribuir/adaptar código sem esclarecer licença. Fonte: https://github.com/CrownParkComputing/Xbox360-Native-Ports
+
+XenonRecomp (hedge-dev) — https://github.com/hedge-dev/XenonRecomp
+Cerca de 6,6 mil estrelas; MIT; atividade recente. Ferramenta de geração de C++ a partir de XEX, não é runtime Android nem jogo/APK pronto. Fonte: https://github.com/hedge-dev/XenonRecomp
+
+3. EMULADORES/FORKS DE XBOX 360 PARA ANDROID
+
+Xenia — https://github.com/xenia-project/xenia — cerca de 9,7 mil estrelas; BSD-3-Clause; emulador desktop/JIT, não encontrei APK Android oficial para jogar.
+Xenia Canary — https://github.com/xenia-canary/xenia-canary — cerca de 2,7 mil estrelas; derivado Xenia; Android é documentado para captura/análise de GPU, não como caminho oficial de jogo em APK. Fontes: https://github.com/xenia-canary/xenia-canary/wiki/Quickstart ; https://xenia.jp/download/
+
+XenDroid — https://github.com/rfandango/XenDroid — cerca de 481 estrelas; fork Android/JIT baseado em Xenia Edge, APK em releases; exige hardware moderno Snapdragon/Adreno segundo o projeto. Não achei FPS numérico reproduzível. A licença é por arquivo/diretório; verificar antes de reutilizar. https://github.com/rfandango/XenDroid/releases
+
+aX360e — https://github.com/WinDroidEmulation/aX360e — cerca de 26 estrelas; fork experimental Xenia/Canary com APK v1.15 (1 abr. 2026), foco em Adreno/drivers customizados; sem FPS comprovado. Licenças variam por arquivo/pasta. https://github.com/WinDroidEmulation/aX360e/releases
+
+Xenia-AE — https://github.com/r0mn-creator/Xenia-AE — cerca de 2 estrelas; MIT para código próprio; APK pré-release v0.4.0 (18 ago. 2026), emulador/JIT Vulkan. Em teste relatado pelo autor em Odin2/Adreno 740 no menu de Halo 3, mediana passou de 4,93 para 17,34 FPS entre builds com -O0 e -O2; cenário específico e não comparável ao MCLA. O mesmo release lista regressões/limitações. https://github.com/r0mn-creator/Xenia-AE/releases
+
+X360RecompAndroid — https://github.com/ViaXTrace/Xbox360RecompAndroid — projeto experimental que declara JIT PowerPC/HLE e Vulkan; atividade e licença GPL-2.0 segundo o projeto; não encontrei jogo/benchmark que prove maturidade ou FPS.
+
+4. REFERÊNCIAS DE OUTRAS PLATAFORMAS
+
+Black-Android (Xbox original, não Xbox 360) — https://github.com/RanggaCasper/Black-Android — MIT, cerca de 176 estrelas, APK v1.6.0 (23 out. 2026), recompilação estática ARM64, Vulkan/SDL3. Declara suporte a famílias Adreno/Mali/Xclipse, mas não achei FPS numérico nem teste independente para cada GPU. https://github.com/RanggaCasper/Black-Android/releases
+
+BlueWake Android (GameCube) — https://github.com/zwaetschge/bluewake-android — GPL-3.0, cerca de 6 estrelas; recompilação estática/Vulkan; sem APK público encontrado. README relata 30 FPS frio e ~21 FPS após aquecimento em Snapdragon 8 Elite/Fold7; relato do projeto. https://github.com/zwaetschge/bluewake-android
+
+DriftDroid (Wii) — https://github.com/dorPXP/driftdroid — GPL-3.0, cerca de 107 estrelas, APK v1.2.0; recompilação estática; Vulkan com fallback GLES. Release documenta cache de shaders, decodificação em múltiplas threads e redução de resolução térmica, sem FPS numérico encontrado. https://github.com/dorPXP/driftdroid/releases
+
+ARMSX2 (PS2) — https://github.com/ARMSX2/ARMSX2 — GPL-3.0-or-later, cerca de 2,3 mil estrelas, APKs nightly; emulador com JIT ARM64. Release relata reduções de ciclos de CPU em jogos/cenas específicos, não ganho universal de FPS. https://github.com/ARMSX2/ARMSX2/releases
+
+ARMSX3 (PS3) — https://github.com/ARMSX2/ARMSX3 — GPL-2.0, cerca de 893 estrelas, release v1.3.2; emulador/JIT ARM64, APK. Sem FPS geral comparável. https://github.com/ARMSX2/ARMSX3/releases
+
+Yakumo (PSP) — https://github.com/TeamGDB/Yakumo — MIT, cerca de 515 estrelas, APK v0.7.5; recompilação estática/Vulkan/SDL3. A documentação diz que validação em dispositivo físico ainda é pendente; sem FPS numérico. https://github.com/TeamGDB/Yakumo/releases ; https://github.com/TeamGDB/Yakumo/blob/main/docs/COMPATIBILITY.md
+
+Goemon64Recomp Android (N64) — https://github.com/ogdanimal/Goemon64Recomp-Android — GPL-3.0, cerca de 17 estrelas, APK v1.0.8; recompilação estática/RT64 Vulkan; sem FPS numérico encontrado. https://github.com/ogdanimal/Goemon64Recomp-Android/releases
+
+5. O QUE PARECE MAIS ÚTIL PARA O MCLA
+
+1) Repetir benchmark controlado e separar CPU/GPU/IO/fences antes de otimizar. Pinyon documenta replay e análise por fase; no código MCLA consultado, tempos submit/readback/acquire ainda estão indisponíveis.
+2) Investigar cache de pipeline Vulkan do driver, compilação paralela e aquecimento. Pinyon e MW2 documentam esses caminhos e os engasgos frios, mas isso ainda precisa de implementação e medição específica no MCLA.
+3) Medir contenção de locks de VFS/áudio e custo de readback/reuso de buffers. Pinyon documenta pausas por lock e alocação de readback no próprio projeto; a causa equivalente no MCLA não está provada.
+4) Analisar contagem de draws/resolves e comportamento Xenos EDRAM antes de tentar batching ou single-pass. NFSMW documenta um caso específico em que um hook reduziu draws/resolves sem diferença de imagem; não é seguro aplicar sem validar a semântica Xenos do MCLA.
+5) Perfilar shaders/limites de memória do Adreno 740 com capturas do MCLA. Pinyon descreve otimização de acesso/buffer com resultado idêntico em seu jogo; isso é uma pista metodológica, não um patch transplantável.
+
+As três referências mais próximas: Pinyon Shift (medição em Adreno 740 e análise de pipelines/readback); NFSMW-Recompiled-Mobile (ReXGlue/Xenos e draw/resolves); mw2-android (pipeline/shader warm-up em Android). Nenhuma prova que o MCLA terá o mesmo resultado.
+
+6. LICENÇAS E RISCO DE REUTILIZAÇÃO
+
+- LARecomp, CrownPark e Skate3-Mobile: sem licença declarada no root consultado. Não há permissão de redistribuição confirmada; não copiar/adaptar código sem esclarecimento do titular.
+- GPL-3.0/GPL-3.0-only: NFSMW Mobile, MW2 Android, Unleashed, BlueWake, DriftDroid e Goemon64. Distribuição de derivados pode exigir avisos, licença compatível e disponibilização do código-fonte correspondente conforme os termos aplicáveis.
+- GPL-2.0: ARMSX3 e projeto ViaXTrace segundo seus metadados. Verificar “only” versus “or later” e compatibilidade antes de combinar/distribuir.
+- BSD-3-Clause: Pinyon e Xenia; preservar avisos, licença e cláusula de não endosso.
+- MIT: Black-Android, Xenia-AE (código próprio), Yakumo e XenonRecomp; preservar copyright e texto de licença em cópias/substantial portions.
+- XenDroid/aX360e: licenças por arquivos/componentes; revisar também licenças herdadas do Xenia, SDL, Mesa/Turnip e demais dependências.
+- Consultar código é diferente de copiá-lo. Para o MCLA, registrar origem e licença de cada dependência/trecho antes de redistribuir fonte ou binário. Isto é um alerta técnico, não aconselhamento jurídico.
+
+Referências gerais de licenças: GPLv3 https://www.gnu.org/licenses/gpl.en.html ; GPL FAQ https://www.gnu.org/licenses/gpl-faq.en.html ; GPLv2 https://www.gnu.org/licenses/old-licenses/gpl-2.0.html ; MIT https://opensource.org/license/mit ; BSD-3-Clause https://opensource.org/license/bsd-3-clause
+
+VEREDITO
+O MCLA já demonstrou que inicia e chega à seleção de carros no S23, mas permanece com desempenho ruim e travamentos relatados, gamepad sem correção comprovada e métricas/configurações ainda sem validação controlada; não há evidência suficiente para declarar causa do gargalo, ganho de FPS ou estabilidade de release.

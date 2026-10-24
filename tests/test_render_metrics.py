@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RenderMetricsTest(unittest.TestCase):
-    def test_draw_rate_and_frame_time_statistics(self):
+    def test_present_count_and_frame_time_statistics(self):
         compiler = shutil.which("c++") or shutil.which("clang++")
         if not compiler:
             self.skipTest("a C++ compiler is required for render metrics tests")

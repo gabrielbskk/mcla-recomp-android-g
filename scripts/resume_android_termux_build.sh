@@ -24,6 +24,8 @@ for key in ('CMAKE_TOOLCHAIN_FILE', 'REXSDK_DIR'):
 PY
 
 "$REXGLUE_CODEGEN" --version
+sdk_root="$(sed -n 's/^REXSDK_DIR:PATH=//p' "$MCLA_BUILD_DIR/CMakeCache.txt" | head -n 1)"
+python3 "$repo_root/scripts/patch_android_present_metrics.py" --sdk "$sdk_root"
 cmake -S "$repo_root" -B "$MCLA_BUILD_DIR" \
     -DREXGLUE_CODEGEN_EXECUTABLE="$REXGLUE_CODEGEN" \
     -DCMAKE_EXPORT_COMPILE_COMMANDS=ON

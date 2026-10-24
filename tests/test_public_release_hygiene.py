@@ -15,10 +15,12 @@ class PublicReleaseHygieneTest(unittest.TestCase):
         self.assertIn("org.mcla.recomp.openbeta", guide)
         self.assertNotIn("org.mcla.recomp.test", guide)
 
-    def test_public_agent_guide_has_no_private_repository_instructions(self):
+    def test_agent_guide_records_public_repository_and_release_boundaries(self):
         guide = (ROOT / "AGENTS.md").read_text()
         self.assertIn("# Repository Guidelines", guide)
-        self.assertNotIn("mcla-recomp-android-g", guide)
+        self.assertIn("gabrielbskk/mcla-recomp-android-g", guide)
+        self.assertIn("is public by the owner's decision", guide)
+        self.assertIn("Never change its visibility", guide)
         self.assertNotIn("Cloud/", guide)
         self.assertFalse((ROOT / "READ_ME_FOR_GITHUB.txt").exists())
 

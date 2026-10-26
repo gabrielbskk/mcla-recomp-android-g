@@ -386,6 +386,7 @@ void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::
     driver_pipeline_cache_ = VK_NULL_HANDLE;
   }
   driver_pipeline_cache_path_ = cache_path;
+  android_vk_cache_dirty_.store(false, std::memory_order_relaxed);
 
   std::vector<uint8_t> initial_data;
   std::ifstream input(cache_path, std::ios::binary | std::ios::ate);
@@ -444,19 +445,26 @@ void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::
 
 void VulkanPipelineCache::SaveAndroidPipelineCache() {
   std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
-  if (driver_pipeline_cache_ == VK_NULL_HANDLE || driver_pipeline_cache_path_.empty()) {
+  if (driver_pipeline_cache_ == VK_NULL_HANDLE || driver_pipeline_cache_path_.empty() ||
+      !android_vk_cache_dirty_.load(std::memory_order_relaxed)) {
     return;
   }
+  android_vk_cache_dirty_.store(false, std::memory_order_relaxed);
+  auto save_failed = [this]() {
+    android_vk_cache_dirty_.store(true, std::memory_order_relaxed);
+  };
   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
   const VkDevice device = vulkan_device->device();
   size_t data_size = 0;
   if (dfn.vkGetPipelineCacheData(device, driver_pipeline_cache_, &data_size, nullptr) != VK_SUCCESS ||
       data_size == 0) {
+    save_failed();
     return;
   }
   std::vector<uint8_t> data(data_size);
   if (dfn.vkGetPipelineCacheData(device, driver_pipeline_cache_, &data_size, data.data()) != VK_SUCCESS) {
+    save_failed();
     return;
   }
   const std::filesystem::path temporary_path = driver_pipeline_cache_path_.string() + ".tmp";
@@ -464,10 +472,12 @@ void VulkanPipelineCache::SaveAndroidPipelineCache() {
     std::ofstream output(temporary_path, std::ios::binary | std::ios::trunc);
     if (!output) {
       REXGPU_WARN("Android Vulkan pipeline cache save open failed");
+      save_failed();
       return;
     }
     output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data_size));
     if (!output) {
+      save_failed();
       return;
     }
   }
@@ -477,6 +487,7 @@ void VulkanPipelineCache::SaveAndroidPipelineCache() {
     REXGPU_WARN("Android Vulkan pipeline cache rename failed: {}", error.message());
     std::error_code cleanup_error;
     std::filesystem::remove(temporary_path, cleanup_error);
+    save_failed();
   }
   if (!error) {
     android_vk_cache_saved_.fetch_add(1, std::memory_order_relaxed);
@@ -557,7 +568,7 @@ PIPELINE_CACHE_STORAGE_THREAD_ANCHOR = (
 PIPELINE_CACHE_STORAGE_THREAD_PATCH = (
     "  bool flush_pipelines = false;\n"
     "  auto next_android_vk_cache_save =\n"
-    "      std::chrono::steady_clock::now() + std::chrono::seconds(1);\n\n"
+    "      std::chrono::steady_clock::now() + std::chrono::seconds(10);\n\n"
     "  while (true) {\n"
 )
 PIPELINE_CACHE_STORAGE_THREAD_WAIT_ANCHOR = (
@@ -570,11 +581,12 @@ PIPELINE_CACHE_STORAGE_THREAD_WAIT_PATCH = (
     "      if (!shader && !write_pipeline) {\n"
     "        storage_write_request_cond_.wait_for(lock, std::chrono::seconds(1));\n"
     "        const auto now = std::chrono::steady_clock::now();\n"
-    "        if (now >= next_android_vk_cache_save) {\n"
+    "        if (now >= next_android_vk_cache_save &&\n"
+    "            android_vk_cache_dirty_.load(std::memory_order_relaxed)) {\n"
     "          lock.unlock();\n"
     "          SaveAndroidPipelineCache();\n"
     "          LogAndroidPipelineCacheMetrics();\n"
-    "          next_android_vk_cache_save = now + std::chrono::seconds(1);\n"
+    "          next_android_vk_cache_save = now + std::chrono::seconds(10);\n"
     "        }\n"
     "        continue;\n"
     "      }\n"
@@ -585,10 +597,11 @@ PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR = (
 )
 PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH = (
     "    const auto now = std::chrono::steady_clock::now();\n"
-    "    if (now >= next_android_vk_cache_save) {\n"
+    "    if (now >= next_android_vk_cache_save &&\n"
+    "        android_vk_cache_dirty_.load(std::memory_order_relaxed)) {\n"
     "      SaveAndroidPipelineCache();\n"
     "      LogAndroidPipelineCacheMetrics();\n"
-    "      next_android_vk_cache_save = now + std::chrono::seconds(1);\n"
+    "      next_android_vk_cache_save = now + std::chrono::seconds(10);\n"
     "    }\n\n"
     "    if (shader) {\n"
     "      shader_header.ucode_data_hash = shader->ucode_data_hash();\n"
@@ -597,6 +610,7 @@ PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH = (
 PIPELINE_CACHE_CREATE_METRICS_PATCH = (
     "\n"
     "  if (create_result == VK_SUCCESS) {\n"
+    "    android_vk_cache_dirty_.store(true, std::memory_order_relaxed);\n"
     "    android_vk_pipelines_created_.fetch_add(1, std::memory_order_relaxed);\n"
     "  }"
 )
@@ -650,6 +664,7 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
     marker = "  VkPipelineCache driver_pipeline_cache_ = VK_NULL_HANDLE;\n"
     fields = (marker + "  std::filesystem::path driver_pipeline_cache_path_;\n"
               "  std::mutex driver_pipeline_cache_lock_;\n"
+              "  std::atomic<bool> android_vk_cache_dirty_{false};\n"
               "  std::atomic<uint64_t> android_vk_cache_loaded_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_rejected_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_saved_{0};\n"

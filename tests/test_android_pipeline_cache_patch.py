@@ -127,7 +127,9 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
             "android_vk_pipelines_created",
         ):
             self.assertIn(metric, patched)
-        self.assertIn("wait_for(lock, std::chrono::seconds(1))", patched)
+        self.assertIn("android_vk_cache_dirty_", patched)
+        self.assertIn("std::chrono::seconds(10)", patched)
+        self.assertNotIn("next_android_vk_cache_save = now + std::chrono::seconds(1)", patched)
         self.assertIn("lock.unlock();", patched)
         self.assertIn("android_vk_pipelines_created_.fetch_add", patched)
 

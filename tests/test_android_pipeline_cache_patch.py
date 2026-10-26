@@ -125,6 +125,7 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
             "android_vk_cache_rejected",
             "android_vk_cache_saved",
             "android_vk_pipelines_created",
+            "android_vk_pipeline_create_us_total",
         ):
             self.assertIn(metric, patched)
         self.assertIn("android_vk_cache_dirty_", patched)

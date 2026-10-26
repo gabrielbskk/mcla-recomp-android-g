@@ -498,11 +498,12 @@ void VulkanPipelineCache::SaveAndroidPipelineCache() {
 void VulkanPipelineCache::LogAndroidPipelineCacheMetrics() {
   REXGPU_INFO(
       "android_vk_cache_loaded={} android_vk_cache_rejected={} android_vk_cache_saved={} "
-      "android_vk_pipelines_created={}",
+      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={}",
       android_vk_cache_loaded_.load(std::memory_order_relaxed),
       android_vk_cache_rejected_.load(std::memory_order_relaxed),
       android_vk_cache_saved_.load(std::memory_order_relaxed),
-      android_vk_pipelines_created_.load(std::memory_order_relaxed));
+      android_vk_pipelines_created_.load(std::memory_order_relaxed),
+      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed));
 }
 
 bool VulkanPipelineCache::Initialize() {
@@ -555,6 +556,7 @@ PIPELINE_CACHE_DESTROY_PATCH = """  const VkDevice device = vulkan_device->devic
 PIPELINE_CACHE_CREATE_ANCHOR = """VkResult create_result = dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                                          &pipeline_create_info, nullptr, &pipeline);"""
 PIPELINE_CACHE_CREATE_PATCH = """VkResult create_result;
+  const auto android_pipeline_create_start = std::chrono::steady_clock::now();
   {
     std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
     create_result = dfn.vkCreateGraphicsPipelines(device, driver_pipeline_cache_, 1,
@@ -611,6 +613,11 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
     "\n"
     "  if (create_result == VK_SUCCESS) {\n"
     "    android_vk_cache_dirty_.store(true, std::memory_order_relaxed);\n"
+    "    android_vk_pipeline_create_us_total_.fetch_add(\n"
+    "        std::chrono::duration_cast<std::chrono::microseconds>(\n"
+    "            std::chrono::steady_clock::now() - android_pipeline_create_start)\n"
+    "            .count(),\n"
+    "        std::memory_order_relaxed);\n"
     "    android_vk_pipelines_created_.fetch_add(1, std::memory_order_relaxed);\n"
     "  }"
 )
@@ -665,6 +672,7 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
     fields = (marker + "  std::filesystem::path driver_pipeline_cache_path_;\n"
               "  std::mutex driver_pipeline_cache_lock_;\n"
               "  std::atomic<bool> android_vk_cache_dirty_{false};\n"
+              "  std::atomic<uint64_t> android_vk_pipeline_create_us_total_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_loaded_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_rejected_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_saved_{0};\n"

@@ -27,7 +27,7 @@ Vulkan support and gameplay have not been validated across Mali, Xclipse, or old
 
 Commit `709f7d6` adds a patcher-driven `VkPipelineCache` for the pinned ReXGlue v0.10.0 tree. It stores the cache below the existing app-private shader-cache root, validates `headerSize`, `headerVersion`, `vendorID`, `deviceID`, and `pipelineCacheUUID`, uses the cache for graphics-pipeline creation, and writes through a temporary sibling followed by rename. Cache access is serialized because Vulkan pipeline-cache host access is externally synchronized. Invalid or truncated data falls back to an empty cache without deleting the prior valid file.
 
-The storage-writer thread emits aggregate keys `android_vk_cache_loaded`, `android_vk_cache_rejected`, `android_vk_cache_saved`, and `android_vk_pipelines_created` at approximately one-second intervals and at shutdown. These are diagnostic counters, not FPS measurements. The Python suite passes 34 tests, including six cache-patcher tests. The native Android build and S23 cold/warm measurements have not yet been completed; no performance gain is claimed.
+The storage-writer thread emits aggregate keys `android_vk_cache_loaded`, `android_vk_cache_rejected`, `android_vk_cache_saved`, `android_vk_pipelines_created`, and total pipeline-creation microseconds at approximately ten-second intervals when the cache is dirty and at shutdown. These are diagnostic counters, not FPS measurements. The Python suite passes 51 tests, including six cache-patcher tests. The native Android build and S23 cold/warm measurements have not yet been completed; no performance gain is claimed.
 
 ## Build and Contribution
 

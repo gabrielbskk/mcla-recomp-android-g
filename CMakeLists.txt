@@ -35,6 +35,16 @@ if(ANDROID)
     include_directories("${REXSDK_DIR}/thirdparty/libucontext/include"
                         "${REXSDK_DIR}/thirdparty/imgui"
                         "${REXSDK_DIR}/thirdparty/libucontext/arch/aarch64/include")
+    # Native Termux builds use an external ARM64 libucontext copy.  The
+    # generated guest target is compiled in this project, so expose its
+    # public header here as well as on ReXGlue's core target.
+    if(MCLA_LIBUCONTEXT_ROOT)
+        include_directories("${MCLA_LIBUCONTEXT_ROOT}/include")
+        if(TARGET rexgpu-xenos)
+            target_include_directories(rexgpu-xenos PRIVATE
+                                       "${MCLA_LIBUCONTEXT_ROOT}/include")
+        endif()
+    endif()
 
     # Vulkan initialization lives in librexruntime, so its Android loader
     # callback must be defined there as well. Keeping this in libmain.so leaves

@@ -27,7 +27,8 @@ java -cp "$D8_JAR" com.android.tools.r8.D8 \
   --lib "$ANDROID_JAR" \
   --min-api 26 \
   --output "$DEX_OUT" \
-  "$work_dir/classes.jar"
+  "$work_dir/classes.jar" \
+  "$COMMONS_COMPRESS_JAR"
 
 test -s "$DEX_OUT/classes.dex"
 echo "DEX: $DEX_OUT/classes.dex"

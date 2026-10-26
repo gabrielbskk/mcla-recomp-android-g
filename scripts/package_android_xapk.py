@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 
-PACKAGE_NAME = "org.mcla.recomp"
+PACKAGE_NAME = "org.mcla.recomp.openbeta"
 REQUIRED_GAME_FILES = (
     "default.xex",
     "xarchive_cache.rpf",

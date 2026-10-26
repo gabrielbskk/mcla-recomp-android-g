@@ -1,0 +1,107 @@
+import importlib.util
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SPEC = importlib.util.spec_from_file_location(
+    "patch_android_rexglue", ROOT / "scripts" / "patch_android_rexglue.py"
+)
+PATCHER = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(PATCHER)
+
+
+PIPELINE_CACHE_SOURCE = """#include <cstring>
+#include <rex/graphics/vulkan/pipeline_cache.h>
+
+VulkanPipelineCache::~VulkanPipelineCache() {
+  Shutdown();
+}
+
+bool VulkanPipelineCache::Initialize() {
+  return true;
+}
+
+void VulkanPipelineCache::InitializeShaderStorage(const std::filesystem::path& cache_root,
+                                                   uint32_t title_id, bool blocking) {
+  auto shader_storage_root = cache_root / "shaders";
+  auto shader_storage_shareable_root = shader_storage_root / "shareable";
+}
+
+void VulkanPipelineCache::ShutdownShaderStorage() {
+  if (storage_write_thread_) {
+  }
+}
+
+bool VulkanPipelineCache::EnsurePipelineCreated() {
+  VkPipelineCacheCreateInfo pipeline_cache_create_info;
+  pipeline_cache_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+  pipeline_cache_create_info.pNext = nullptr;
+  pipeline_cache_create_info.flags = 0;
+  pipeline_cache_create_info.initialDataSize = 0;
+  pipeline_cache_create_info.pInitialData = nullptr;
+  VkResult result = dfn.vkCreatePipelineCache(device, &pipeline_cache_create_info, nullptr,
+                                              &pipeline_cache_);
+  VkResult create_result = dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+                                                         &pipeline_create_info, nullptr, &pipeline);
+}
+
+void VulkanPipelineCache::Shutdown() {
+  ShutdownShaderStorage();
+
+  const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+
+  ProcessDeferredPipelineDestructions(true);
+  dfn.vkDestroyPipelineCache(device, pipeline_cache_, nullptr);
+}
+"""
+
+
+class AndroidPipelineCachePatchTest(unittest.TestCase):
+    def test_adds_validated_initial_data_and_atomic_write(self):
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+
+        self.assertIn("VkPipelineCacheHeaderVersionOne", patched)
+        self.assertIn("vendorID", patched)
+        self.assertIn("deviceID", patched)
+        self.assertIn("pipelineCacheUUID", patched)
+        self.assertIn("std::memcpy(&header", patched)
+        self.assertIn("driver_pipeline_cache_lock_", patched)
+        self.assertIn("pipeline_cache_create_info.pInitialData", patched)
+        self.assertIn("vkGetPipelineCacheData", patched)
+        self.assertIn(".tmp", patched)
+        self.assertIn("rename", patched)
+        self.assertIn("rename failed", patched)
+        self.assertNotIn("remove(driver_pipeline_cache_path_", patched)
+
+    def test_adds_handle_to_header(self):
+        header = """class VulkanPipelineCache {
+ private:
+  void StorageWriteThread();
+};
+"""
+        patched = PATCHER.patch_android_vulkan_pipeline_cache_header(header)
+        self.assertIn("driver_pipeline_cache_", patched)
+        self.assertIn("driver_pipeline_cache_path_", patched)
+
+    def test_adds_pipeline_cache_functions_to_device_table(self):
+        functions = "XE_UI_VULKAN_FUNCTION(vkCreatePipelineLayout)\n"
+        patched = PATCHER.patch_android_vulkan_pipeline_functions(functions)
+        self.assertIn("vkCreatePipelineCache", patched)
+        self.assertIn("vkDestroyPipelineCache", patched)
+        self.assertIn("vkGetPipelineCacheData", patched)
+
+    def test_is_idempotent(self):
+        once = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        twice = PATCHER.patch_android_vulkan_pipeline_cache(once)
+        self.assertEqual(once, twice)
+
+    def test_rejects_unknown_source(self):
+        with self.assertRaises(SystemExit):
+            PATCHER.patch_android_vulkan_pipeline_cache("void DifferentPipelineCache() {}")
+
+
+if __name__ == "__main__":
+    unittest.main()

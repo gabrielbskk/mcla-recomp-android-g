@@ -283,6 +283,7 @@ PIPELINE_CREATION_LOGS = (
 PIPELINE_CACHE_HEADER_ANCHOR = "  void StorageWriteThread();\n"
 PIPELINE_CACHE_HEADER_PATCH = """  void InitializeAndroidPipelineCache(const std::filesystem::path& cache_path);
   void SaveAndroidPipelineCache();
+  void LogAndroidPipelineCacheMetrics();
 
   void StorageWriteThread();
 """
@@ -296,7 +297,7 @@ PIPELINE_CACHE_DEVICE_FUNCTIONS_PATCH = (
 )
 
 PIPELINE_CACHE_SOURCE_INCLUDE_ANCHOR = "#include <cstring>\n"
-PIPELINE_CACHE_SOURCE_INCLUDE_PATCH = "#include <cstring>\n#include <fstream>\n"
+PIPELINE_CACHE_SOURCE_INCLUDE_PATCH = "#include <chrono>\n#include <cstring>\n#include <fstream>\n"
 
 PIPELINE_CACHE_SOURCE_CONSTRUCTOR_ANCHOR = """VulkanPipelineCache::~VulkanPipelineCache() {
   Shutdown();
@@ -331,6 +332,7 @@ void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::
                  static_cast<std::streamsize>(size));
       if (input.gcount() != static_cast<std::streamsize>(size)) {
         initial_data.clear();
+        android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);
         REXGPU_INFO("Android Vulkan pipeline cache rejected: truncated read");
       } else {
         VkPipelineCacheHeaderVersionOne header{};
@@ -345,11 +347,13 @@ void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::
             std::memcmp(header.pipelineCacheUUID, properties.pipelineCacheUUID, VK_UUID_SIZE) == 0;
         if (!header_matches) {
           initial_data.clear();
+          android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);
           REXGPU_INFO("Android Vulkan pipeline cache rejected: header mismatch");
         }
       }
     } else {
       initial_data.clear();
+      android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);
       REXGPU_INFO("Android Vulkan pipeline cache rejected: truncated file");
     }
   }
@@ -362,8 +366,10 @@ void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::
                                                     &driver_pipeline_cache_);
   if (result != VK_SUCCESS) {
     driver_pipeline_cache_ = VK_NULL_HANDLE;
+    android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);
     REXGPU_WARN("Android Vulkan pipeline cache creation failed: {}", int32_t(result));
   } else if (!initial_data.empty()) {
+    android_vk_cache_loaded_.fetch_add(1, std::memory_order_relaxed);
     REXGPU_INFO("Android Vulkan pipeline cache loaded: {} bytes", initial_data.size());
   } else {
     REXGPU_INFO("Android Vulkan pipeline cache started empty");
@@ -407,8 +413,19 @@ void VulkanPipelineCache::SaveAndroidPipelineCache() {
     std::filesystem::remove(temporary_path, cleanup_error);
   }
   if (!error) {
+    android_vk_cache_saved_.fetch_add(1, std::memory_order_relaxed);
     REXGPU_INFO("Android Vulkan pipeline cache saved: {} bytes", data_size);
   }
+}
+
+void VulkanPipelineCache::LogAndroidPipelineCacheMetrics() {
+  REXGPU_INFO(
+      "android_vk_cache_loaded={} android_vk_cache_rejected={} android_vk_cache_saved={} "
+      "android_vk_pipelines_created={}",
+      android_vk_cache_loaded_.load(std::memory_order_relaxed),
+      android_vk_cache_rejected_.load(std::memory_order_relaxed),
+      android_vk_cache_saved_.load(std::memory_order_relaxed),
+      android_vk_pipelines_created_.load(std::memory_order_relaxed));
 }
 
 bool VulkanPipelineCache::Initialize() {
@@ -467,6 +484,57 @@ PIPELINE_CACHE_CREATE_PATCH = """VkResult create_result;
                                                    &pipeline_create_info, nullptr, &pipeline);
   }"""
 
+PIPELINE_CACHE_STORAGE_THREAD_ANCHOR = (
+    "  bool flush_pipelines = false;\n\n"
+    "  while (true) {\n"
+)
+PIPELINE_CACHE_STORAGE_THREAD_PATCH = (
+    "  bool flush_pipelines = false;\n"
+    "  auto next_android_vk_cache_save =\n"
+    "      std::chrono::steady_clock::now() + std::chrono::seconds(1);\n\n"
+    "  while (true) {\n"
+)
+PIPELINE_CACHE_STORAGE_THREAD_WAIT_ANCHOR = (
+    "      if (!shader && !write_pipeline) {\n"
+    "        storage_write_request_cond_.wait(lock);\n"
+    "        continue;\n"
+    "      }\n"
+)
+PIPELINE_CACHE_STORAGE_THREAD_WAIT_PATCH = (
+    "      if (!shader && !write_pipeline) {\n"
+    "        storage_write_request_cond_.wait_for(lock, std::chrono::seconds(1));\n"
+    "        const auto now = std::chrono::steady_clock::now();\n"
+    "        if (now >= next_android_vk_cache_save) {\n"
+    "          lock.unlock();\n"
+    "          SaveAndroidPipelineCache();\n"
+    "          LogAndroidPipelineCacheMetrics();\n"
+    "          next_android_vk_cache_save = now + std::chrono::seconds(1);\n"
+    "        }\n"
+    "        continue;\n"
+    "      }\n"
+)
+PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR = (
+    "    if (shader) {\n"
+    "      shader_header.ucode_data_hash = shader->ucode_data_hash();\n"
+)
+PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH = (
+    "    const auto now = std::chrono::steady_clock::now();\n"
+    "    if (now >= next_android_vk_cache_save) {\n"
+    "      SaveAndroidPipelineCache();\n"
+    "      LogAndroidPipelineCacheMetrics();\n"
+    "      next_android_vk_cache_save = now + std::chrono::seconds(1);\n"
+    "    }\n\n"
+    "    if (shader) {\n"
+    "      shader_header.ucode_data_hash = shader->ucode_data_hash();\n"
+)
+
+PIPELINE_CACHE_CREATE_METRICS_PATCH = (
+    "\n"
+    "  if (create_result == VK_SUCCESS) {\n"
+    "    android_vk_pipelines_created_.fetch_add(1, std::memory_order_relaxed);\n"
+    "  }"
+)
+
 
 def patch_android_vulkan_pipeline_cache(source: str) -> str:
     """Add Android-private Vulkan driver cache handling to ReXGlue v0.10.0."""
@@ -479,6 +547,9 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
         PIPELINE_CACHE_SHUTDOWN_SAVE_ANCHOR,
         PIPELINE_CACHE_DESTROY_ANCHOR,
         PIPELINE_CACHE_CREATE_ANCHOR,
+        PIPELINE_CACHE_STORAGE_THREAD_ANCHOR,
+        PIPELINE_CACHE_STORAGE_THREAD_WAIT_ANCHOR,
+        PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR,
     )
     if any(source.count(anchor) != 1 for anchor in anchors):
         raise SystemExit("Expected ReXGlue v0.10.0 Vulkan pipeline cache anchors")
@@ -492,7 +563,16 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                             PIPELINE_CACHE_SHUTDOWN_SAVE_PATCH, 1)
     source = source.replace(PIPELINE_CACHE_DESTROY_ANCHOR,
                             PIPELINE_CACHE_DESTROY_PATCH, 1)
-    return source.replace(PIPELINE_CACHE_CREATE_ANCHOR, PIPELINE_CACHE_CREATE_PATCH, 1)
+    source = source.replace(PIPELINE_CACHE_CREATE_ANCHOR, PIPELINE_CACHE_CREATE_PATCH, 1)
+    source = source.replace(PIPELINE_CACHE_CREATE_PATCH,
+                            PIPELINE_CACHE_CREATE_PATCH + PIPELINE_CACHE_CREATE_METRICS_PATCH,
+                            1)
+    source = source.replace(PIPELINE_CACHE_STORAGE_THREAD_ANCHOR,
+                            PIPELINE_CACHE_STORAGE_THREAD_PATCH, 1)
+    source = source.replace(PIPELINE_CACHE_STORAGE_THREAD_WAIT_ANCHOR,
+                            PIPELINE_CACHE_STORAGE_THREAD_WAIT_PATCH, 1)
+    return source.replace(PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR,
+                          PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH, 1)
 
 
 def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
@@ -503,7 +583,11 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
         raise SystemExit("Expected ReXGlue v0.10.0 Vulkan pipeline cache header anchor")
     marker = "  VkPipelineCache driver_pipeline_cache_ = VK_NULL_HANDLE;\n"
     fields = (marker + "  std::filesystem::path driver_pipeline_cache_path_;\n"
-              "  std::mutex driver_pipeline_cache_lock_;\n\n")
+              "  std::mutex driver_pipeline_cache_lock_;\n"
+              "  std::atomic<uint64_t> android_vk_cache_loaded_{0};\n"
+              "  std::atomic<uint64_t> android_vk_cache_rejected_{0};\n"
+              "  std::atomic<uint64_t> android_vk_cache_saved_{0};\n"
+              "  std::atomic<uint64_t> android_vk_pipelines_created_{0};\n\n")
     header = header.replace(PIPELINE_CACHE_HEADER_ANCHOR,
                             PIPELINE_CACHE_HEADER_PATCH + fields, 1)
     return header

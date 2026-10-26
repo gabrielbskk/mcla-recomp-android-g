@@ -33,6 +33,25 @@ void VulkanPipelineCache::ShutdownShaderStorage() {
   }
 }
 
+void VulkanPipelineCache::StorageWriteThread() {
+  bool flush_pipelines = false;
+
+  while (true) {
+    const Shader* shader = nullptr;
+    bool write_pipeline = false;
+    {
+      std::unique_lock<std::mutex> lock(storage_write_request_lock_);
+      if (!shader && !write_pipeline) {
+        storage_write_request_cond_.wait(lock);
+        continue;
+      }
+    }
+    if (shader) {
+      shader_header.ucode_data_hash = shader->ucode_data_hash();
+    }
+  }
+}
+
 bool VulkanPipelineCache::EnsurePipelineCreated() {
   VkPipelineCacheCreateInfo pipeline_cache_create_info;
   pipeline_cache_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
@@ -97,6 +116,20 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
         once = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
         twice = PATCHER.patch_android_vulkan_pipeline_cache(once)
         self.assertEqual(once, twice)
+
+    def test_emits_periodic_cache_metrics(self):
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+
+        for metric in (
+            "android_vk_cache_loaded",
+            "android_vk_cache_rejected",
+            "android_vk_cache_saved",
+            "android_vk_pipelines_created",
+        ):
+            self.assertIn(metric, patched)
+        self.assertIn("wait_for(lock, std::chrono::seconds(1))", patched)
+        self.assertIn("lock.unlock();", patched)
+        self.assertIn("android_vk_pipelines_created_.fetch_add", patched)
 
     def test_rejects_unknown_source(self):
         with self.assertRaises(SystemExit):

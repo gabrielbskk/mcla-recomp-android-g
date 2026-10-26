@@ -1,6 +1,6 @@
 # MCLA Recomp Android — Project Status
 
-Updated 2026-10-23. This document summarizes the Android ARM64 project state and distinguishes user reports from measurements. Changes on an unpublished development branch are not evidence about the APK currently installed or hosted.
+Updated 2026-10-26. This document summarizes the Android ARM64 project state and distinguishes user reports from measurements. Changes on an unpublished development branch are not evidence about the APK currently installed or hosted.
 
 ## Current Open Beta
 
@@ -22,6 +22,12 @@ A later I/O-trace run passed guest-memory setup and reached car selection after 
 Graphics presets and resolution settings are present in the launcher/runtime configuration, but the latest user report did not observe a clear visual difference. The development-branch performance log records presentation timing, while submit/readback/acquire fence-wait columns remain unavailable. No controlled resolution sweep or cold-versus-warm run has established a bottleneck or gain. Treat prior guest-tick and draw-callback values as distinct from presented-FPS measurements.
 
 Vulkan support and gameplay have not been validated across Mali, Xclipse, or older Adreno devices. A system-driver fallback exists in the code, but universal compatibility is not established.
+
+## Development branch: Vulkan driver pipeline cache
+
+Commit `709f7d6` adds a patcher-driven `VkPipelineCache` for the pinned ReXGlue v0.10.0 tree. It stores the cache below the existing app-private shader-cache root, validates `headerSize`, `headerVersion`, `vendorID`, `deviceID`, and `pipelineCacheUUID`, uses the cache for graphics-pipeline creation, and writes through a temporary sibling followed by rename. Cache access is serialized because Vulkan pipeline-cache host access is externally synchronized. Invalid or truncated data falls back to an empty cache without deleting the prior valid file.
+
+The storage-writer thread emits aggregate keys `android_vk_cache_loaded`, `android_vk_cache_rejected`, `android_vk_cache_saved`, and `android_vk_pipelines_created` at approximately one-second intervals and at shutdown. These are diagnostic counters, not FPS measurements. The Python suite passes 34 tests, including six cache-patcher tests. The native Android build and S23 cold/warm measurements have not yet been completed; no performance gain is claimed.
 
 ## Build and Contribution
 

@@ -64,6 +64,15 @@ endif()
 """
 
 
+SDK_FILESYSTEM_CMAKE = """\
+add_library(rexfilesystem OBJECT
+    device.cpp
+)
+add_library(rex::filesystem ALIAS rexfilesystem)
+target_link_libraries(rexfilesystem PUBLIC rexcore)
+"""
+
+
 FIBER_HEADER = """\
 #if REX_PLATFORM_LINUX || REX_PLATFORM_MAC
 #include <ucontext.h>
@@ -159,6 +168,13 @@ class AndroidPlatformPatchTest(unittest.TestCase):
         self.assertIn("elseif(ANDROID)", patched)
         self.assertIn("target_link_libraries(rexcore PRIVATE dl log)", patched)
         self.assertEqual(patched, PATCHER.patch_android_core_cmake(patched))
+
+    def test_filesystem_adds_android_content_bridge(self):
+        patched = PATCHER.patch_android_filesystem_cmake(SDK_FILESYSTEM_CMAKE)
+        self.assertIn("android/android_content.cpp", patched)
+        self.assertIn("SDL3::SDL3", patched)
+        self.assertEqual(patched, PATCHER.patch_android_filesystem_cmake(patched))
+        self.assertIn("OpenAndroidContentFileDescriptor", PATCHER.ANDROID_CONTENT_SOURCE)
 
     def test_fiber_uses_libucontext_symbols(self):
         header = PATCHER.patch_android_fiber_header(FIBER_HEADER)

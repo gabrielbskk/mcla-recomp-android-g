@@ -76,6 +76,13 @@ if(ANDROID)
     target_sources(mcla PRIVATE src/touch_controls.cpp)
     set_target_properties(mcla PROPERTIES OUTPUT_NAME main)
     target_compile_options(mcla PRIVATE -include SDL3/SDL_main.h)
+    # SDL's Android JNI bridge lives in a static archive object that has no
+    # ordinary C++ references from the game. Force the bridge into libmain so
+    # SDLActivity's native callbacks are registered at startup.
+    target_link_options(mcla PRIVATE
+        "-Wl,-u,JNI_OnLoad"
+        "-Wl,-u,Java_org_libsdl_app_SDLActivity_nativeAllowRecreateActivity"
+        "-Wl,-u,Java_org_libsdl_app_SDLActivity_nativePermissionResult")
 elseif(WIN32)
     add_executable(mcla WIN32 ${MCLA_SOURCES})
 else()
@@ -83,6 +90,14 @@ else()
 endif()
 
 rexglue_setup_target(mcla)
+
+if(ANDROID)
+    # Pull SDL_android.c from the static SDL archive.  Its JNI callbacks are
+    # discovered by Java at runtime and therefore have no C++ reference that
+    # would otherwise cause the archive member to be extracted.
+    target_link_options(mcla PRIVATE
+        "-Wl,--whole-archive,$<TARGET_FILE:SDL3::SDL3>,--no-whole-archive")
+endif()
 
 if(ANDROID AND TARGET mcla_recomp)
     # Recompiled guest code is an OBJECT library linked into libmain.so; make

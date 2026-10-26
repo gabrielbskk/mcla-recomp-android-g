@@ -5,6 +5,72 @@ from pathlib import Path
 import argparse
 
 
+ANDROID_CONTENT_SOURCE = r'''#include <rex/filesystem.h>
+
+#include <SDL3/SDL_system.h>
+#include <jni.h>
+
+#include <string>
+
+namespace rex::filesystem {
+
+void AndroidInitialize() {}
+void AndroidShutdown() {}
+
+bool IsAndroidContentUri(const std::string_view source) {
+  return source.starts_with("content://");
+}
+
+int OpenAndroidContentFileDescriptor(const std::string_view uri, const char* mode) {
+  auto* env = static_cast<JNIEnv*>(SDL_GetAndroidJNIEnv());
+  auto activity = static_cast<jobject>(SDL_GetAndroidActivity());
+  if (!env || !activity || !mode) return -1;
+
+  int fd = -1;
+  jclass activity_class = env->GetObjectClass(activity);
+  jmethodID get_resolver = activity_class
+      ? env->GetMethodID(activity_class, "getContentResolver", "()Landroid/content/ContentResolver;")
+      : nullptr;
+  jobject resolver = get_resolver ? env->CallObjectMethod(activity, get_resolver) : nullptr;
+  jclass uri_class = env->FindClass("android/net/Uri");
+  jmethodID parse_uri = uri_class
+      ? env->GetStaticMethodID(uri_class, "parse", "(Ljava/lang/String;)Landroid/net/Uri;")
+      : nullptr;
+  jstring uri_string = env->NewStringUTF(std::string(uri).c_str());
+  jobject android_uri = parse_uri && uri_string ? env->CallStaticObjectMethod(uri_class, parse_uri, uri_string) : nullptr;
+  jclass resolver_class = resolver ? env->GetObjectClass(resolver) : nullptr;
+  jmethodID open_fd = resolver_class
+      ? env->GetMethodID(resolver_class, "openFileDescriptor", "(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;")
+      : nullptr;
+  jstring mode_string = env->NewStringUTF(mode);
+  jobject descriptor = open_fd && android_uri && mode_string
+      ? env->CallObjectMethod(resolver, open_fd, android_uri, mode_string)
+      : nullptr;
+  jclass descriptor_class = descriptor ? env->GetObjectClass(descriptor) : nullptr;
+  jmethodID detach_fd = descriptor_class ? env->GetMethodID(descriptor_class, "detachFd", "()I") : nullptr;
+  if (detach_fd) fd = env->CallIntMethod(descriptor, detach_fd);
+  if (env->ExceptionCheck()) {
+    env->ExceptionClear();
+    fd = -1;
+  }
+
+  if (descriptor_class) env->DeleteLocalRef(descriptor_class);
+  if (descriptor) env->DeleteLocalRef(descriptor);
+  if (mode_string) env->DeleteLocalRef(mode_string);
+  if (resolver_class) env->DeleteLocalRef(resolver_class);
+  if (android_uri) env->DeleteLocalRef(android_uri);
+  if (uri_string) env->DeleteLocalRef(uri_string);
+  if (uri_class) env->DeleteLocalRef(uri_class);
+  if (resolver) env->DeleteLocalRef(resolver);
+  if (activity_class) env->DeleteLocalRef(activity_class);
+  env->DeleteLocalRef(activity);
+  return fd;
+}
+
+}  // namespace rex::filesystem
+'''
+
+
 PATCHES = {
     "vulkan_require_geometry_shader": (
         "REXCVAR_DEFINE_BOOL(vulkan_require_geometry_shader, !REX_PLATFORM_MAC,",
@@ -1355,6 +1421,28 @@ def patch_android_thirdparty_cmake(text: str) -> str:
     )
 
 
+def patch_android_filesystem_cmake(text: str) -> str:
+    """Compile the Android Storage Access Framework bridge into rexfilesystem."""
+    if "android/android_content.cpp" in text:
+        return text
+    anchor = "add_library(rexfilesystem OBJECT\n"
+    if text.count(anchor) != 1:
+        raise SystemExit("Expected the ReXGlue filesystem target declaration")
+    text = text.replace(
+        anchor,
+        anchor + "    $<$<PLATFORM_ID:Android>:android/android_content.cpp>\n",
+        1,
+    )
+    link_anchor = "target_link_libraries(rexfilesystem PUBLIC rexcore)"
+    if text.count(link_anchor) != 1:
+        raise SystemExit("Expected the ReXGlue filesystem link declaration")
+    return text.replace(
+        link_anchor,
+        link_anchor + "\nif(ANDROID)\n    target_link_libraries(rexfilesystem PUBLIC SDL3::SDL3)\nendif()",
+        1,
+    )
+
+
 def patch_android_core_cmake(text: str) -> str:
     """Link Android fibers against the vendored ARM64 libucontext."""
     if "REX_USE_LIBUCONTEXT=1" in text:
@@ -1578,6 +1666,7 @@ def patch_android_platform_files(sdk: Path) -> None:
     cmake_patches = (
         (sdk / "CMakeLists.txt", patch_android_platform_cmake),
         (sdk / "src/core/CMakeLists.txt", patch_android_core_cmake),
+        (sdk / "src/filesystem/CMakeLists.txt", patch_android_filesystem_cmake),
         (sdk / "src/ui/CMakeLists.txt", patch_android_ui_cmake),
         (sdk / "thirdparty/CMakeLists.txt", patch_android_thirdparty_cmake),
         (sdk / "src/ui/window_sdl.cpp", patch_android_window_sources),
@@ -1591,6 +1680,14 @@ def patch_android_platform_files(sdk: Path) -> None:
         if patched != original:
             path.write_text(patched, encoding="utf-8")
             print(f"Patched Android platform support in {path}.")
+
+    content_source = sdk / "src/filesystem/android/android_content.cpp"
+    content_source.parent.mkdir(parents=True, exist_ok=True)
+    if not content_source.exists():
+        content_source.write_text(ANDROID_CONTENT_SOURCE, encoding="utf-8")
+        print(f"Added {content_source}.")
+    elif content_source.read_text(encoding="utf-8") != ANDROID_CONTENT_SOURCE:
+        raise SystemExit(f"Unexpected existing Android content bridge: {content_source}")
 
     fiber_header = sdk / "include/rex/thread/fiber.h"
     fiber_source = sdk / "src/core/fiber_posix.cpp"

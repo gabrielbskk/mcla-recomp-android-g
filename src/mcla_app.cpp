@@ -13,6 +13,7 @@
 #include <thread>
 #if defined(__ANDROID__)
 #include <SDL3/SDL_system.h>
+#include <spdlog/sinks/android_sink.h>
 #endif
 
 #include <imgui.h>
@@ -325,6 +326,10 @@ void MclaApp::OnConfigurePaths(rex::PathConfig& paths) {
 
 void MclaApp::OnPostInitLogging() {
 #if defined(__ANDROID__)
+  // Keep the private rotating file as the authoritative log, but mirror the
+  // startup/failure path to logcat so an early Runtime/asset failure can be
+  // diagnosed without requiring access to filesDir.
+  rex::AddSink(std::make_shared<spdlog::sinks::android_sink_mt>("MCLA"));
   if (!g_android_path_diagnostics.empty()) REXLOG_INFO("{}", g_android_path_diagnostics);
 #endif
 }

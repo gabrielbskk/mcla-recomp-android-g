@@ -1,0 +1,39 @@
+name: Android source validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feature/android-vk-cache
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  source-checks:
+    name: Python checks and repository hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check whitespace and tracked-file policy
+        run: |
+          git diff --check
+          if git ls-files | grep -Eq '\.(apk|xapk|obb|xex|rpf|bik|nxeart|keystore|jks)$'; then
+            echo "forbidden binary or signing material is tracked"
+            exit 1
+          fi
+
+      - name: Run complete test suite
+        run: python -m unittest discover -s tests -p 'test_*.py' -v

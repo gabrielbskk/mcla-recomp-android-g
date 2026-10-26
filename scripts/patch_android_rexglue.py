@@ -1289,11 +1289,368 @@ ANDROID_CHRONO_SDK_ANDROID_PATCH = (
 )
 
 
+def patch_android_platform_cmake(text: str) -> str:
+    """Make the SDK's platform selection explicit for Android toolchains."""
+    if 'elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Android")' in text:
+        return text
+    anchor = (
+        '    add_compile_definitions(REX_PLATFORM_WINDOWS=1)\n'
+        'elseif(UNIX AND NOT APPLE)\n'
+    )
+    if text.count(anchor) != 1:
+        raise SystemExit("Expected the ReXGlue platform-selection CMake block")
+    android_block = (
+        '    add_compile_definitions(REX_PLATFORM_WINDOWS=1)\n'
+        'elseif(ANDROID OR CMAKE_SYSTEM_NAME STREQUAL "Android")\n'
+        '    if(NOT REX_TARGET_PROCESSOR MATCHES "aarch64|ARM64|arm64")\n'
+        '        message(FATAL_ERROR "Unsupported Android architecture: ${REX_TARGET_PROCESSOR}")\n'
+        '    endif()\n'
+        '    set(REX_PLATFORM "android-arm64")\n'
+        '    add_compile_definitions(REX_PLATFORM_ANDROID=1)\n'
+        'elseif(UNIX AND NOT APPLE)\n'
+    )
+    return text.replace(anchor, android_block, 1)
+
+
+def patch_android_ui_cmake(text: str) -> str:
+    """Select the Android native-window surface and avoid X11/Wayland probes."""
+    if "surface_android.cpp" not in text:
+        source_else = text.find("else()", text.find("surface_mac.cpp"))
+        if source_else < 0:
+            raise SystemExit("Expected the ReXGlue UI platform-source block")
+        source_end = text.find("endif()", source_else)
+        if source_end < 0 or "surface_gnulinux.cpp" not in text[source_else:source_end]:
+            raise SystemExit("Expected the ReXGlue GNU/Linux UI source branch")
+        replacement = (
+            "elseif(ANDROID)\n"
+            "    set(REXUI_PLATFORM_SOURCES\n"
+            "        surface_android.cpp\n"
+            "    )\n"
+            "else()\n"
+        )
+        text = text[:source_else] + replacement + text[source_else + len("else()\n"):]
+    if "if(UNIX AND NOT APPLE AND NOT ANDROID)" not in text:
+        linux_anchor = "if(UNIX AND NOT APPLE)\n    find_package(PkgConfig REQUIRED)"
+        if text.count(linux_anchor) != 1:
+            raise SystemExit("Expected the ReXGlue UI host-backend dependency block")
+        text = text.replace(
+            linux_anchor,
+            "if(UNIX AND NOT APPLE AND NOT ANDROID)\n    find_package(PkgConfig REQUIRED)",
+            1,
+        )
+    return text
+
+
+def patch_android_thirdparty_cmake(text: str) -> str:
+    """Do not enable desktop Linux SDL drivers in an Android build."""
+    if "if(UNIX AND NOT APPLE AND NOT ANDROID)" in text:
+        return text
+    anchor = "if(UNIX AND NOT APPLE)\n    set(SDL_X11"
+    if text.count(anchor) != 1:
+        raise SystemExit("Expected the ReXGlue SDL Linux-backend block")
+    return text.replace(
+        anchor,
+        "if(UNIX AND NOT APPLE AND NOT ANDROID)\n    set(SDL_X11",
+        1,
+    )
+
+
+def patch_android_core_cmake(text: str) -> str:
+    """Link Android fibers against the vendored ARM64 libucontext."""
+    if "REX_USE_LIBUCONTEXT=1" in text:
+        return text
+    anchor = "add_library(rex::core ALIAS rexcore)\n"
+    if text.count(anchor) != 1:
+        raise SystemExit("Expected the ReXGlue core target declaration")
+    block = (
+        anchor +
+        "\nif(MCLA_LIBUCONTEXT_ROOT)\n"
+        "    target_compile_definitions(rexcore PUBLIC REX_USE_LIBUCONTEXT=1)\n"
+        "    target_include_directories(rexcore PUBLIC \"${MCLA_LIBUCONTEXT_ROOT}/include\")\n"
+        "    target_link_libraries(rexcore PRIVATE \"${MCLA_LIBUCONTEXT_ROOT}/lib/libucontext.a\")\n"
+        "endif()\n"
+    )
+    text = text.replace(anchor, block, 1)
+    link_block = (
+        "if(APPLE)\n"
+        "    target_link_libraries(rexcore PRIVATE pthread)\n"
+        "elseif(UNIX)\n"
+        "    target_link_libraries(rexcore PRIVATE pthread rt dl)\n"
+        "endif()"
+    )
+    if text.count(link_block) != 1:
+        raise SystemExit("Expected the ReXGlue core platform link block")
+    text = text.replace(
+        link_block,
+        "if(APPLE)\n"
+        "    target_link_libraries(rexcore PRIVATE pthread)\n"
+        "elseif(ANDROID)\n"
+        "    target_link_libraries(rexcore PRIVATE dl log)\n"
+        "elseif(UNIX)\n"
+        "    target_link_libraries(rexcore PRIVATE pthread rt dl)\n"
+        "endif()",
+        1,
+    )
+    return text
+
+
+def patch_android_fiber_header(text: str) -> str:
+    """Use libucontext's Android-safe context type instead of removed bionic APIs."""
+    if "libucontext/libucontext.h" not in text:
+        include_anchor = "#include <ucontext.h>"
+        if text.count(include_anchor) != 1:
+            raise SystemExit("Expected the ReXGlue fiber ucontext include")
+        text = text.replace(
+            include_anchor,
+            "#if REX_PLATFORM_ANDROID || defined(REX_USE_LIBUCONTEXT)\n"
+            "#include <libucontext/libucontext.h>\n"
+            "#else\n"
+            "#include <ucontext.h>\n"
+            "#endif",
+            1,
+        )
+    if "libucontext_ucontext_t context_{};" not in text:
+        context_anchor = "  ucontext_t context_{};"
+        if text.count(context_anchor) != 1:
+            raise SystemExit("Expected the ReXGlue fiber context member")
+        text = text.replace(
+            context_anchor,
+            "#if REX_PLATFORM_ANDROID || defined(REX_USE_LIBUCONTEXT)\n"
+            "  libucontext_ucontext_t context_{};\n"
+            "#else\n"
+            "  ucontext_t context_{};\n"
+            "#endif",
+            1,
+        )
+    return text
+
+
+def patch_android_fiber_source(text: str) -> str:
+    """Call the explicit libucontext entry points on Android."""
+    if "libucontext_getcontext" in text:
+        return text
+    for old, new in (
+        ("getcontext(", "libucontext_getcontext("),
+        ("makecontext(", "libucontext_makecontext("),
+        ("swapcontext(", "libucontext_swapcontext("),
+    ):
+        if text.count(old) < 1:
+            raise SystemExit(f"Expected ReXGlue fiber call {old}")
+        text = text.replace(old, new)
+    return text
+
+
+def patch_android_memory_api_helper(text: str) -> str:
+    """Include the shared Android API-level helper in the POSIX memory backend."""
+    if "#include <rex/main_android.h>" in text:
+        return text
+    anchor = "#include <android/api-level.h>\n"
+    if text.count(anchor) != 1:
+        raise SystemExit("Expected the Android API-level include in memory_posix.cpp")
+    return text.replace(anchor, anchor + "#include <rex/main_android.h>\n", 1)
+
+
+def patch_android_threading_source(text: str) -> str:
+    """Avoid glibc-only robust mutex APIs absent from Android bionic."""
+    old = "#if REX_PLATFORM_LINUX\n"
+    new = "#if REX_PLATFORM_LINUX && !REX_PLATFORM_ANDROID\n"
+    if new in text and old not in text:
+        return text
+    if text.count(old) < 1:
+        raise SystemExit("Expected Linux mutex guards in threading_posix.cpp")
+    return text.replace(old, new)
+
+
+def android_main_header() -> str:
+    return """#pragma once
+#include <android/api-level.h>
+
+namespace rex {
+inline int GetAndroidApiLevel() { return android_get_device_api_level(); }
+}  // namespace rex
+"""
+
+
+def patch_android_window_sources(text: str) -> str:
+    """Route SDL's Vulkan surface discovery through ANativeWindow on Android."""
+    if "#include <rex/ui/surface_android.h>" not in text:
+        include_anchor = "#elif REX_PLATFORM_MAC\n"
+        if text.count(include_anchor) < 1:
+            raise SystemExit("Expected SDL window platform include block")
+        text = text.replace(
+            include_anchor,
+            "#elif REX_PLATFORM_ANDROID\n#include <rex/ui/surface_android.h>\n"
+            "#elif REX_PLATFORM_MAC\n",
+            1,
+        )
+    android_surface_branch = (
+        "#elif REX_PLATFORM_ANDROID\n"
+        "  SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);\n"
+        "  if (allowed_types & Surface::kTypeFlag_AndroidNativeWindow) {\n"
+        "    auto* native_window = static_cast<ANativeWindow*>(\n"
+        "        SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));\n"
+        "    if (native_window) {\n"
+        "      return std::make_unique<AndroidNativeWindowSurface>(native_window);\n"
+        "    }\n"
+        "  }\n"
+        "#else\n"
+    )
+    props_marker = "SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);"
+    create_pos = text.find("std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl")
+    props_pos = text.find(props_marker, create_pos)
+    if props_pos < 0:
+        raise SystemExit("Expected SDL window surface creation block")
+    if "#elif REX_PLATFORM_ANDROID" in text[create_pos:props_pos]:
+        return text
+    desktop_else_pos = text.rfind("#else\n", 0, props_pos)
+    if desktop_else_pos < 0:
+        raise SystemExit("Expected SDL desktop surface branch")
+    return text[:desktop_else_pos] + android_surface_branch + text[desktop_else_pos + len("#else\n"):]
+
+
+def patch_android_windowed_app_main(text: str) -> str:
+    """Use the named Android app creator instead of the desktop singleton."""
+    old = "    std::unique_ptr<rex::ui::WindowedApp> app = rex::ui::GetWindowedAppCreator()(app_context);"
+    if "WindowedApp::GetCreator(\"mcla\")" in text:
+        return text
+    if text.count(old) != 1:
+        raise SystemExit("Expected the SDL windowed-app creator call")
+    new = (
+        "#if REX_PLATFORM_ANDROID\n"
+        "    auto app_creator = rex::ui::WindowedApp::GetCreator(\"mcla\");\n"
+        "#else\n"
+        "    auto app_creator = rex::ui::GetWindowedAppCreator();\n"
+        "#endif\n"
+        "    if (!app_creator) {\n"
+        "      REXLOG_ERROR(\"No windowed app creator registered\");\n"
+        "      return EXIT_FAILURE;\n"
+        "    }\n"
+        "    std::unique_ptr<rex::ui::WindowedApp> app = app_creator(app_context);"
+    )
+    return text.replace(old, new, 1)
+
+
+def android_surface_sources() -> tuple[str, str]:
+    """Return the small ANativeWindow surface adapter needed by Vulkan."""
+    header = """#pragma once
+#include <android/native_window.h>
+#include <rex/ui/surface.h>
+
+namespace rex::ui {
+class AndroidNativeWindowSurface final : public Surface {
+ public:
+  explicit AndroidNativeWindowSurface(ANativeWindow* window) : window_(window) {}
+  TypeIndex GetType() const override { return kTypeIndex_AndroidNativeWindow; }
+  ANativeWindow* window() const { return window_; }
+
+ protected:
+  bool GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const override;
+
+ private:
+  ANativeWindow* window_;
+};
+}  // namespace rex::ui
+"""
+    source = """#include <rex/ui/surface_android.h>
+
+namespace rex::ui {
+bool AndroidNativeWindowSurface::GetSizeImpl(uint32_t& width_out,
+                                             uint32_t& height_out) const {
+  if (!window_) {
+    return false;
+  }
+  const int width = ANativeWindow_getWidth(window_);
+  const int height = ANativeWindow_getHeight(window_);
+  if (width <= 0 || height <= 0) {
+    return false;
+  }
+  width_out = static_cast<uint32_t>(width);
+  height_out = static_cast<uint32_t>(height);
+  return true;
+}
+}  // namespace rex::ui
+"""
+    return header, source
+
+
+def patch_android_platform_files(sdk: Path) -> None:
+    """Apply only the CMake/windowing pieces needed by an Android SDK build."""
+    cmake_patches = (
+        (sdk / "CMakeLists.txt", patch_android_platform_cmake),
+        (sdk / "src/core/CMakeLists.txt", patch_android_core_cmake),
+        (sdk / "src/ui/CMakeLists.txt", patch_android_ui_cmake),
+        (sdk / "thirdparty/CMakeLists.txt", patch_android_thirdparty_cmake),
+        (sdk / "src/ui/window_sdl.cpp", patch_android_window_sources),
+        (sdk / "src/ui/windowed_app_main_sdl.cpp", patch_android_windowed_app_main),
+    )
+    for path, patch in cmake_patches:
+        if not path.is_file():
+            raise SystemExit(f"ReXGlue Android platform source not found: {path}")
+        original = path.read_text(encoding="utf-8")
+        patched = patch(original)
+        if patched != original:
+            path.write_text(patched, encoding="utf-8")
+            print(f"Patched Android platform support in {path}.")
+
+    fiber_header = sdk / "include/rex/thread/fiber.h"
+    fiber_source = sdk / "src/core/fiber_posix.cpp"
+    for path, patch in ((fiber_header, patch_android_fiber_header),
+                        (fiber_source, patch_android_fiber_source)):
+        if not path.is_file():
+            raise SystemExit(f"ReXGlue fiber source not found: {path}")
+        original = path.read_text(encoding="utf-8")
+        patched = patch(original)
+        if patched != original:
+            path.write_text(patched, encoding="utf-8")
+            print(f"Patched Android fiber context support in {path}.")
+
+    memory_source = sdk / "src/core/memory_posix.cpp"
+    if not memory_source.is_file():
+        raise SystemExit(f"ReXGlue memory source not found: {memory_source}")
+    memory_original = memory_source.read_text(encoding="utf-8")
+    memory_patched = patch_android_memory_api_helper(memory_original)
+    if memory_patched != memory_original:
+        memory_source.write_text(memory_patched, encoding="utf-8")
+        print(f"Added Android API-level helper include to {memory_source}.")
+
+    main_android_header = sdk / "include/rex/main_android.h"
+    if not main_android_header.exists():
+        main_android_header.write_text(android_main_header(), encoding="utf-8")
+        print(f"Added {main_android_header}.")
+    elif main_android_header.read_text(encoding="utf-8") != android_main_header():
+        raise SystemExit(f"Unexpected existing Android API helper: {main_android_header}")
+
+    threading_source = sdk / "src/core/threading_posix.cpp"
+    if not threading_source.is_file():
+        raise SystemExit(f"ReXGlue threading source not found: {threading_source}")
+    threading_original = threading_source.read_text(encoding="utf-8")
+    threading_patched = patch_android_threading_source(threading_original)
+    if threading_patched != threading_original:
+        threading_source.write_text(threading_patched, encoding="utf-8")
+        print(f"Disabled glibc-only robust mutex recovery on Android in {threading_source}.")
+
+    header, source = android_surface_sources()
+    surface_header = sdk / "include/rex/ui/surface_android.h"
+    surface_source = sdk / "src/ui/surface_android.cpp"
+    if not surface_header.exists():
+        surface_header.write_text(header, encoding="utf-8")
+        print(f"Added {surface_header}.")
+    elif surface_header.read_text(encoding="utf-8") != header:
+        raise SystemExit(f"Unexpected existing Android surface header: {surface_header}")
+    if not surface_source.exists():
+        surface_source.write_text(source, encoding="utf-8")
+        print(f"Added {surface_source}.")
+    elif surface_source.read_text(encoding="utf-8") != source:
+        raise SystemExit(f"Unexpected existing Android surface source: {surface_source}")
+
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--sdk", required=True, type=Path, help="ReXGlue SDK source directory")
     args = parser.parse_args()
+
+    patch_android_platform_files(args.sdk)
 
     source = args.sdk / "src/ui/vulkan/vulkan_device.cpp"
     if not source.is_file():

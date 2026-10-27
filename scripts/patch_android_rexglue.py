@@ -653,8 +653,18 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                     "    save_failed();\n",
                 ),
                 (
+                    "  if (dfn.vkGetPipelineCacheData(device, driver_pipeline_cache_, &data_size, data.data()) != VK_SUCCESS) {\n    return;\n",
+                    "  if (dfn.vkGetPipelineCacheData(device, driver_pipeline_cache_, &data_size, data.data()) != VK_SUCCESS) {\n"
+                    "    save_failed();\n"
+                    "    return;\n",
+                ),
+                (
                     "    if (!output) {\n      return;\n",
                     "    if (!output) {\n      save_failed();\n      return;\n",
+                ),
+                (
+                    "    output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data_size));\n    if (!output) {\n      return;\n",
+                    "    output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data_size));\n    if (!output) {\n      save_failed();\n      return;\n",
                 ),
                 (
                     "  if (create_result == VK_SUCCESS) {\n    android_vk_pipelines_created_.fetch_add",
@@ -672,26 +682,34 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                 if source.count(original) != 1:
                     raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
                 source = source.replace(original, replacement, 1)
+            create_anchor = "  VkResult create_result;\n  {\n"
+            if source.count(create_anchor) != 1:
+                raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
             source = source.replace(
-                "  VkResult create_result;\n  {\n",
+                create_anchor,
                 "  VkResult create_result;\n"
                 "  const auto android_pipeline_create_start = std::chrono::steady_clock::now();\n"
                 "  {\n",
                 1,
             )
-            source = source.replace(
-                "      std::chrono::steady_clock::now() + std::chrono::seconds(1);",
-                "      std::chrono::steady_clock::now() + std::chrono::seconds(10);",
-            )
-            source = source.replace(
-                "if (now >= next_android_vk_cache_save) {",
-                "if (now >= next_android_vk_cache_save &&\n"
-                "            android_vk_cache_dirty_.load(std::memory_order_relaxed)) {",
-            )
-            source = source.replace(
-                "next_android_vk_cache_save = now + std::chrono::seconds(1);",
-                "next_android_vk_cache_save = now + std::chrono::seconds(10);",
-            )
+            for original, replacement in (
+                (
+                    "      std::chrono::steady_clock::now() + std::chrono::seconds(1);",
+                    "      std::chrono::steady_clock::now() + std::chrono::seconds(10);",
+                ),
+                (
+                    "if (now >= next_android_vk_cache_save) {",
+                    "if (now >= next_android_vk_cache_save &&\n"
+                    "            android_vk_cache_dirty_.load(std::memory_order_relaxed)) {",
+                ),
+                (
+                    "next_android_vk_cache_save = now + std::chrono::seconds(1);",
+                    "next_android_vk_cache_save = now + std::chrono::seconds(10);",
+                ),
+            ):
+                if source.count(original) == 0:
+                    raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
+                source = source.replace(original, replacement)
         return source
     anchors = (
         PIPELINE_CACHE_SOURCE_INCLUDE_ANCHOR,

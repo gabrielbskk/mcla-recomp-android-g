@@ -44,9 +44,9 @@ Processo usado: build manual ARM64 via scripts/resume_android_termux_build.sh, s
 
 - libmain.so: 82.371.856 bytes, gerado em out/build/android-arm64-termux.
 - librexruntime.so: 12.294.904 bytes, gerado no SDK externo.
-- librexgpu-xenos.so: 5.937.616 bytes na última saída válida anterior; a recompilação diagnóstica foi interrompida antes de concluir esta biblioteca.
+- librexgpu-xenos.so: 5.937.616 bytes, concluído na recompilação diagnóstica.
 
-A compilação foi interrompida durante a etapa rexgpu-xenos, em texture_cache.cpp. Portanto a build diagnóstica NÃO terminou, o APK diagnóstico NÃO foi montado, alinhado ou assinado, e não existe SHA-256 de um APK diagnóstico. APKs antigos no diretório out/apk não representam esta alteração completa.
+A build diagnóstica terminou pelo processo manual ARM64. O APK `out/apk/MCLA-diagnostic-fence-thermal-v0.1.2.apk` foi montado com `APK_DEBUGGABLE=1`, alinhado, assinado e validado por `apksigner` e `verify_android_apk.py`. SHA-256: `c78e92a21e9dc17b3c891c99893045770d5d9d24128a84589154c2b6d2cf5814`. O mesmo arquivo foi copiado para `/storage/emulated/0/Download/MCLA-diagnostic-fence-thermal-v0.1.2.apk` e o hash conferiu. O certificado SHA-256 é `c12a43023ed864654e56bed81d91e2d0fd98e46c5f22cbec32d5b585661ca7aa`.
 
 Avisos observados durante a compilação: -stdlib=libc++ não usado pelo clang do alvo; warning de largura do operando fpcr; std::move pessimizado; inicialização fora de ordem; memcpy/memset em tipos packed/non-trivially-copyable; parâmetros não usados. Nenhum desses avisos foi tratado como causa de crash sem evidência.
 
@@ -91,7 +91,7 @@ Pendência de qualidade: tests/test_android_fence_metrics_patch.py verifica tran
 
 9. O que eu estava fazendo e o que faria em seguida
 
-Eu estava terminando a única build diagnóstica no Termux ARM64. O CMake já havia concluído libmain e librexruntime, mas a compilação foi pausada na biblioteca gráfica. Ao retomar, o procedimento correto é continuar o mesmo build incremental, sem apagar o diretório de saída.
+Eu estava terminando a única build diagnóstica no Termux ARM64. A compilação incremental foi retomada e concluiu as três bibliotecas, o DEX e o APK. A etapa seguinte é instalar e medir somente quando o ADB voltar; o endpoint fornecido foi `100.89.26.102:45679`, mas a conexão caiu antes da instalação.
 
 Depois da compilação completa, o fluxo é: compilar o DEX pelo script manual existente; montar uma única variante debuggable com base em base-with-measurement-dex.apk; copiar as três bibliotecas; zipalign; assinar somente com a debug.keystore fora do repositório; validar com apksigner e verify_android_apk.py; calcular SHA-256; e entregar o APK para teste posterior. Não instalar nem pedir ADB automaticamente.
 
@@ -110,4 +110,4 @@ Somente após o usuário solicitar explicitamente o teste no S23, usar os extras
 
 11. Veredito
 
-O projeto já tem uma base funcional: memória guest, inicialização do runtime, leitura dos assets principais, controle e cache Vulkan foram demonstrados. O problema de desempenho urbano continua grave e a causa ainda não foi isolada. A telemetria diagnóstica foi preparada, os testes de transformação passaram, mas a build diagnóstica foi interrompida antes do APK e os fence-waits ainda não chegam ao CSV. O próximo marco confiável é concluir essa build e coletar uma medição controlada; qualquer otimização antes disso seria especulativa.
+O projeto já tem uma base funcional: memória guest, inicialização do runtime, leitura dos assets principais, controle e cache Vulkan foram demonstrados. O problema de desempenho urbano continua grave e a causa ainda não foi isolada. A telemetria diagnóstica foi preparada, os testes de transformação passaram e o APK diagnóstico foi validado localmente. Ainda faltam a instalação/medição no S23 e a integração dos fence-waits no CSV; qualquer otimização antes desses números seria especulativa.

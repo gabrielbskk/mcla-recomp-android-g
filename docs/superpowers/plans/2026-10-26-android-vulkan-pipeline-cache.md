@@ -24,6 +24,8 @@
 - Cache I/O must not block the graphics submission/render thread.
 - SDK patch anchors must fail closed if ReXGlue v0.10.0 source differs.
 - Cache metrics must distinguish loaded, rejected, saved, and newly created pipelines.
+- Cache metrics must include time waiting for the shared driver-cache mutex so a
+  per-thread cache/merge change is evidence-driven.
 - The first implementation covers the Xenos game pipelines in `pipeline_cache.cpp`.
   Auxiliary Vulkan pipelines in the presenter, UI drawer, gamma pass, and render-target
   transfer path still require separate measurement before they are folded into the shared cache.

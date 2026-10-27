@@ -15,8 +15,9 @@ run was performed for this audit.
 - `pipeline_cache.cpp:365-423` snapshots cache data under
   `driver_pipeline_cache_lock_`, releases that lock before temporary-file I/O,
   and serializes saves with `driver_pipeline_cache_save_lock_`.
-- `pipeline_cache.cpp:3691-3694` passes `driver_pipeline_cache_` to the Xenos
-  game `vkCreateGraphicsPipelines` call.
+- `pipeline_cache.cpp:3691-3703` passes `driver_pipeline_cache_` to the Xenos
+  game `vkCreateGraphicsPipelines` call and accumulates wait time for the shared
+  cache mutex in `android_vk_pipeline_cache_lock_wait_us_total`.
 - `pipeline_cache.cpp:958-1000` stops creation/storage workers before destroying
   the driver cache.
 - The harness in `tests/pipeline_cache_save_harness.cpp` proves that a pipeline
@@ -42,8 +43,8 @@ changing to per-thread caches before those measurements would be speculative.
 
 ## Validation status
 
-- Focused pipeline-cache tests: **11 passed**.
-- Full Python suite previously verified: **61 passed**.
+- Focused pipeline-cache tests: **14 passed**.
+- Full Python suite: **65 passed**.
 - `git diff --check`: clean after the last commit.
 - No new APK, ADB installation, FPS measurement, or performance claim.
 

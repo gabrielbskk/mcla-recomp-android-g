@@ -16,7 +16,7 @@ No game data, cache files, keystore, or device logs are included.
   `ZipArchiveInputStream` and all required ARM64 libraries.
 - The assembled APK passed `zipalign`, `apksigner verify`, and the repository
   preflight verifier.
-- Repository tests: 51 passed.
+- Repository tests: 52 passed.
 
 ## Artifact status
 

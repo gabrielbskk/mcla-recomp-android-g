@@ -61,6 +61,13 @@ The Open Beta APK was built with the manual Termux ARM64 process. The complete G
 
 For the existing Termux cache, use `scripts/resume_android_termux_build.sh` with `MCLA_BUILD_DIR` and `REXGLUE_CODEGEN` set to the verified cache and host wrapper. It checks which checkout owns the cache and builds all three native libraries. The generic `scripts/build_android.sh` uses the NDK-host toolchain and must not be mistaken for the Termux procedure. See [manual build recovery](../docs/performance/termux-build-recovery-2026-10-23.md) for the commands and remaining reproducibility limits. Setting `MCLA_ANDROID_IO_TRACE=ON` enables temporary file-open/read tracing. Java changes must also be compiled to DEX before packaging; replacing only the native libraries does not include launcher changes. Use `scripts/build_android_dex.sh` with a current Android platform `android.jar`, a modern R8/D8 jar, and `commons-compress.jar`. The legacy Termux `dx` tool is unsupported because it leaves Java lambda call sites that crash at launcher startup with `BootstrapMethodError`.
 
+To assemble a test APK without Gradle, use `scripts/assemble_android_apk.sh`.
+It accepts the working base APK, the three freshly built libraries, and a
+keystore through environment variables, then strips old signatures, aligns,
+signs, and runs both `apksigner` and the repository APK preflight verifier.
+Keep `APK_KEYSTORE`, `APK_STORE_PASSWORD`, and `APK_KEY_PASSWORD` outside the
+repository; never put them in a command recorded in project documentation.
+
 ## Launcher screenshots
 
 These captures show only the app launcher, with no gameplay or game assets:

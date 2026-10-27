@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture runtime evidence from an already-installed APK; never installs or uninstalls.
+# Capture runtime evidence from an APK already present on the device; never changes package state.
 set -euo pipefail
 
 : "${ADB_SERIAL:?Set ADB_SERIAL to the confirmed device endpoint}"

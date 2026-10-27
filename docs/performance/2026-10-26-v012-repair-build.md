@@ -14,6 +14,9 @@ No game data, cache files, keystore, or device logs are included.
 - `build_android_dex.sh` completed with D8 8.6.17 and Commons Compress 1.28.0.
 - The Open Beta base APK passed package/dependency preflight, including
   `ZipArchiveInputStream` and all required ARM64 libraries.
+- The patcher upgraded a preserved legacy Android SDK copy and was idempotent
+  on its second run; the resulting source contains the dirty-bit and pipeline
+  creation-time metrics.
 - The assembled APK passed `zipalign`, `apksigner verify`, and the repository
   preflight verifier.
 - Repository tests: 52 passed.

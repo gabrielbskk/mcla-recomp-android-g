@@ -150,6 +150,12 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             PATCHER.patch_android_vulkan_pipeline_cache("void DifferentPipelineCache() {}")
 
+    def test_rejects_incomplete_legacy_source(self):
+        with self.assertRaises(SystemExit):
+            PATCHER.patch_android_vulkan_pipeline_cache(
+                "void InitializeAndroidPipelineCache() {}"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

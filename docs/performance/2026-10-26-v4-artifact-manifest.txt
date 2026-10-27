@@ -1,0 +1,23 @@
+MCLA Android Open Beta v4 — local artifact manifest
+
+APK: MCLA-v012-vkcache-renan-fixes-v4.apk
+APK SHA-256: 56fbfd3bf496e2501d18e514f3aca2542a70d568fa63c5235ae52fe90537a405
+Package: org.mcla.recomp.openbeta
+Base: Open Beta v0.1.2 (versionCode 3)
+ABI: arm64-v8a
+Signing: Android debug certificate (test-only)
+
+Native library SHA-256:
+  libmain.so:         4c0bfda80187b4646a0a20762a2147efba31d0107b9be2325184042597ca115f
+  librexruntime.so:   1841e84f55ee4fe265bbe35cfe11625c81fb28f73ffe9a2e5d9d5214dbc45d5f
+  librexgpu-xenos.so: 24a847fd728e3a5f4abbf2e15e059bc31fbe167d57a8e2a8db0fd9cf66f824ce
+
+Validation:
+  - 53 repository tests passed after the latest source change.
+  - APK preflight, zipalign, and apksigner verification passed.
+  - All native libraries are ELF64 AArch64 for Android API 26.
+  - No S23 installation, logcat capture, or FPS measurement has been performed
+    for this artifact; stability and performance gains remain unproven.
+
+The APK, game data, shader/pipeline caches, signing key, and device logs are
+intentionally excluded from Git.

@@ -105,6 +105,18 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
         self.assertIn("driver_pipeline_cache_", patched)
         self.assertIn("driver_pipeline_cache_path_", patched)
 
+    def test_upgrades_legacy_header_with_driver_cache(self):
+        legacy_header = """class VulkanPipelineCache {
+ private:
+  VkPipelineCache driver_pipeline_cache_ = VK_NULL_HANDLE;
+  std::filesystem::path driver_pipeline_cache_path_;
+  std::mutex driver_pipeline_cache_lock_;
+};
+"""
+        upgraded = PATCHER.patch_android_vulkan_pipeline_cache_header(legacy_header)
+        self.assertIn("android_vk_cache_dirty_", upgraded)
+        self.assertIn("android_vk_pipeline_create_us_total_", upgraded)
+
     def test_adds_pipeline_cache_functions_to_device_table(self):
         functions = "XE_UI_VULKAN_FUNCTION(vkCreatePipelineLayout)\n"
         patched = PATCHER.patch_android_vulkan_pipeline_functions(functions)

@@ -240,6 +240,23 @@ void VulkanPipelineCache::Shutdown() {
         self.assertIn("android_pipeline_cache_lock_wait_start", patched)
         self.assertIn("std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);", patched)
 
+    def test_generated_pipeline_creation_metrics_compile(self):
+        compiler = shutil.which("clang++") or shutil.which("c++")
+        if not compiler:
+            self.skipTest("C++ compiler required")
+        source = (ROOT / "tests/pipeline_cache_create_harness.cpp").read_text()
+        source = source.replace("// INSERT_CREATE_BLOCK", PATCHER.PIPELINE_CACHE_CREATE_PATCH)
+        source = source.replace("// INSERT_CREATE_METRICS", PATCHER.PIPELINE_CACHE_CREATE_METRICS_PATCH)
+        with tempfile.TemporaryDirectory(prefix="mcla-cache-create-") as directory:
+            test_source = Path(directory) / "test.cpp"
+            binary = Path(directory) / "test"
+            test_source.write_text(source)
+            build = subprocess.run([compiler, "-std=c++17", "-pthread", str(test_source),
+                                    "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            run = subprocess.run([str(binary)], capture_output=True, text=True, timeout=5)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
     def test_upgrades_existing_cache_source_with_lock_wait_metric(self):
         current = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
         current = current.replace(

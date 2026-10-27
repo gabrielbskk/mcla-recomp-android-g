@@ -33,6 +33,9 @@ ended_at="$(date +%s)"
 "$adb_bin" -s "$ADB_SERIAL" shell top -b -n 1 -H >"$OUTPUT_DIR/top-${started_at}-${ended_at}.txt" || true
 "$adb_bin" -s "$ADB_SERIAL" shell dumpsys SurfaceFlinger --latency "$PACKAGE_NAME/$ACTIVITY_NAME" \
   >"$OUTPUT_DIR/surface-latency-${started_at}-${ended_at}.txt" || true
+"$adb_bin" -s "$ADB_SERIAL" shell run-as "$PACKAGE_NAME" \
+  cat files/mcla-recomp/logs/performance-v3.csv \
+  >"$OUTPUT_DIR/performance-v3-${started_at}-${ended_at}.csv" || true
 printf 'package=%s\nactivity=%s\nresolution=%s\neffects=%s\nduration_s=%s\n' \
   "$PACKAGE_NAME" "$ACTIVITY_NAME" "${RESOLUTION:-720p}" "${EFFECTS:-super_low}" \
   "$DURATION_SECONDS" >"$OUTPUT_DIR/run-${started_at}-${ended_at}.txt"

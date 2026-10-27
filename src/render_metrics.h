@@ -20,31 +20,37 @@ struct FrameTimeSummary {
   double max_ms = 0.0;
 };
 
-inline FrameTimeSummary SummarizeFrameTimes(std::vector<float>& samples) {
-  samples.erase(std::remove_if(samples.begin(), samples.end(), [](float value) {
-                  return !std::isfinite(value) || value <= 0.0f;
-                }), samples.end());
-  std::sort(samples.begin(), samples.end());
+inline FrameTimeSummary SummarizeFrameTimes(float* samples, size_t sample_count) {
+  size_t valid_count = 0;
+  for (size_t index = 0; index < sample_count; ++index) {
+    const float value = samples[index];
+    if (std::isfinite(value) && value > 0.0f) samples[valid_count++] = value;
+  }
+  std::sort(samples, samples + valid_count);
 
   FrameTimeSummary summary;
-  summary.sample_count = samples.size();
-  if (samples.empty()) return summary;
+  summary.sample_count = valid_count;
+  if (valid_count == 0) return summary;
   double total_ms = 0.0;
-  for (float sample : samples) {
-    total_ms += sample;
-    if (sample > 50.0f) ++summary.over_50ms;
+  for (size_t index = 0; index < valid_count; ++index) {
+    total_ms += samples[index];
+    if (samples[index] > 50.0f) ++summary.over_50ms;
   }
-  summary.mean_ms = total_ms / static_cast<double>(samples.size());
-  const auto percentile = [&samples](double fraction) {
-    const size_t index = std::min(samples.size() - 1,
-        static_cast<size_t>(std::ceil(static_cast<double>(samples.size()) * fraction)) - 1);
+  summary.mean_ms = total_ms / static_cast<double>(valid_count);
+  const auto percentile = [samples, valid_count](double fraction) {
+    const size_t index = std::min(valid_count - 1,
+        static_cast<size_t>(std::ceil(static_cast<double>(valid_count) * fraction)) - 1);
     return static_cast<double>(samples[index]);
   };
   summary.p50_ms = percentile(0.50);
   summary.p95_ms = percentile(0.95);
   summary.p99_ms = percentile(0.99);
-  summary.max_ms = static_cast<double>(samples.back());
+  summary.max_ms = static_cast<double>(samples[valid_count - 1]);
   return summary;
+}
+
+inline FrameTimeSummary SummarizeFrameTimes(std::vector<float>& samples) {
+  return SummarizeFrameTimes(samples.data(), samples.size());
 }
 
 struct PresentedFrameSnapshot {
@@ -90,20 +96,23 @@ class PresentedFrameWindow {
 
     const double elapsed = std::min(1.0, monotonic_seconds - started);
     const double cutoff = monotonic_seconds - 1.0;
-    std::vector<float> frame_times;
-    frame_times.reserve(static_cast<size_t>(end - begin));
+    std::array<float, kCapacity> frame_times{};
+    size_t frame_time_count = 0;
     for (uint64_t sequence = begin; sequence < end; ++sequence) {
       const size_t slot = static_cast<size_t>(sequence % kCapacity);
       const double timestamp = timestamps_seconds_[slot].load(std::memory_order_acquire);
       if (timestamp < cutoff || timestamp > monotonic_seconds) continue;
       ++snapshot.presentations;
       const float interval_ms = intervals_ms_[slot].load(std::memory_order_relaxed);
-      if (interval_ms > 0.0f) frame_times.push_back(interval_ms);
+      if (interval_ms > 0.0f && frame_time_count < frame_times.size()) {
+        frame_times[frame_time_count++] = interval_ms;
+      }
     }
     if (elapsed > 0.0) {
       snapshot.presented_fps = static_cast<double>(snapshot.presentations) / elapsed;
     }
-    const FrameTimeSummary summary = SummarizeFrameTimes(frame_times);
+    const FrameTimeSummary summary =
+        SummarizeFrameTimes(frame_times.data(), frame_time_count);
     snapshot.mean_ms = summary.mean_ms;
     snapshot.p50_ms = summary.p50_ms;
     snapshot.p95_ms = summary.p95_ms;

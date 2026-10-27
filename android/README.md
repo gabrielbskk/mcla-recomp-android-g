@@ -68,6 +68,19 @@ signs, and runs both `apksigner` and the repository APK preflight verifier.
 Keep `APK_KEYSTORE`, `APK_STORE_PASSWORD`, and `APK_KEY_PASSWORD` outside the
 repository; never put them in a command recorded in project documentation.
 
+For a device capture after the user has connected ADB, use the read-only
+runtime collector (it does not install, uninstall, or clear app data):
+
+```sh
+ADB_SERIAL=192.0.2.10:5555 OUTPUT_DIR=/tmp/mcla-perf-v4 \
+  DURATION_SECONDS=20 RESOLUTION=720p EFFECTS=super_low \
+  bash scripts/capture_android_perf.sh
+```
+
+Replace the endpoint with the confirmed ADB address. The collector saves
+logcat, `top -H`, memory, gfxinfo, and SurfaceFlinger latency snapshots; the
+runtime performance CSV remains the authoritative presented-FPS/p95/p99 log.
+
 ## Launcher screenshots
 
 These captures show only the app launcher, with no gameplay or game assets:

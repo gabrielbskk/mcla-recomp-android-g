@@ -55,6 +55,10 @@ changing to per-thread caches before those measurements would be speculative.
 - `clang-tidy` was attempted but could not start because the existing
   `compile_commands.json` points to a missing `.cache/mcla-build-deps` directory;
   native analyzer output is therefore still unavailable.
+- A direct `clang++ -fsyntax-only` attempt with the SDK command line also
+  stopped before analyzing this patch: Termux's Android headers and the
+  installed `libucontext` both define `sigcontext`. This is a toolchain/SDK
+  setup issue, not evidence of a pipeline-cache compile failure.
 - No new APK, ADB installation, FPS measurement, or performance claim.
 
 The next justified build is a measurement build that reports Xenos-cache lock

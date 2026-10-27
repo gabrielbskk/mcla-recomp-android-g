@@ -42,6 +42,14 @@ class AndroidSettingsTest(unittest.TestCase):
             app,
         )
 
+    def test_android_startup_forces_thirty_fps_cap(self):
+        settings_menu = (ROOT / "src/settings_menu.cpp").read_text()
+        self.assertIn(
+            'SetFlagByName("mcla_fps", "30")',
+            settings_menu,
+            "Android startup must override persisted or intent FPS values with the fixed cap",
+        )
+
     def test_native_graphics_preset_mapping(self):
         compiler = shutil.which("c++") or shutil.which("clang++")
         if not compiler:

@@ -962,6 +962,15 @@ void MclaApplyStartupSettings() {
   }
 
 #if defined(__ANDROID__)
+  // Keep the Android build on the game's original 30 FPS budget.  This is
+  // intentionally applied after config/intent parsing so a stale `0` (or a
+  // higher experimental value) cannot re-enable an uncapped render loop.
+  if (rex::cvar::SetFlagByName("mcla_fps", "30")) {
+    REXLOG_INFO("android settings: fixed 30 FPS cap enabled");
+  } else {
+    REXLOG_WARN("android settings: could not enforce fixed 30 FPS cap");
+  }
+
   // Apply the selected preset, including Medium on a fresh install, unless
   // the in-game menu has saved individual detail options.
   {

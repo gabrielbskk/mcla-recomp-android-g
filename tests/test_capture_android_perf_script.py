@@ -14,6 +14,15 @@ class CaptureAndroidPerfScriptTest(unittest.TestCase):
         self.assertNotIn("uninstall", SCRIPT)
         self.assertNotIn("install ", SCRIPT)
 
+    def test_capture_samples_native_threads_and_gpu_busy(self):
+        self.assertIn("sampled-top-", SCRIPT)
+        self.assertIn("kgsl-3d0/gpu_busy_percentage", SCRIPT)
+        self.assertIn("pidof", SCRIPT)
+
+    def test_capture_falls_back_to_public_exported_logs_for_release_builds(self):
+        self.assertIn("Documents/MCLA/logs", SCRIPT)
+        self.assertIn("public-log", SCRIPT)
+
 
 if __name__ == "__main__":
     unittest.main()

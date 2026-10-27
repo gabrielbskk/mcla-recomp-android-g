@@ -3,12 +3,15 @@
 #include "mcla_app.h"
 #include "render_metrics.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <string>
 #include <thread>
 #if defined(__ANDROID__)
@@ -59,6 +62,92 @@ void RotatePerformanceLog(const std::filesystem::path& path) {
   std::filesystem::rename(path, path.string() + ".1", error);
 }
 
+struct AndroidThermalSnapshot {
+  double max_temperature_c = -1.0;
+  long long min_cpu_freq_khz = -1;
+  long long max_cpu_freq_khz = -1;
+  long long gpu_freq_khz = -1;
+  long long gpu_max_freq_khz = -1;
+  int throttling_hint = -1;
+};
+
+long long ReadAndroidSysfsInteger(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  long long value = -1;
+  if (input) input >> value;
+  return input.fail() ? -1 : value;
+}
+
+AndroidThermalSnapshot ReadAndroidThermalSnapshot() {
+  AndroidThermalSnapshot snapshot;
+  const std::filesystem::path thermal_root("/sys/class/thermal");
+  std::error_code error;
+  if (std::filesystem::exists(thermal_root, error) && !error) {
+    for (const auto& entry : std::filesystem::directory_iterator(thermal_root, error)) {
+      if (error || !entry.is_directory(error)) continue;
+      const auto value = ReadAndroidSysfsInteger(entry.path() / "temp");
+      if (value >= 0) {
+        snapshot.max_temperature_c = std::max(snapshot.max_temperature_c,
+                                              static_cast<double>(value) / 1000.0);
+      }
+    }
+  }
+
+  const std::filesystem::path cpu_root("/sys/devices/system/cpu");
+  long long min_current = std::numeric_limits<long long>::max();
+  long long max_current = -1;
+  long long max_allowed = -1;
+  error.clear();
+  if (std::filesystem::exists(cpu_root, error) && !error) {
+    for (const auto& entry : std::filesystem::directory_iterator(cpu_root, error)) {
+      if (error || !entry.is_directory(error) || entry.path().filename().string().rfind("cpu", 0) != 0) {
+        continue;
+      }
+      const auto current = ReadAndroidSysfsInteger(entry.path() / "cpufreq/scaling_cur_freq");
+      const auto allowed = ReadAndroidSysfsInteger(entry.path() / "cpufreq/cpuinfo_max_freq");
+      if (current >= 0) {
+        min_current = std::min(min_current, current);
+        max_current = std::max(max_current, current);
+      }
+      max_allowed = std::max(max_allowed, allowed);
+    }
+  }
+  if (max_current >= 0) snapshot.max_cpu_freq_khz = max_current;
+  if (min_current != std::numeric_limits<long long>::max()) snapshot.min_cpu_freq_khz = min_current;
+  snapshot.max_cpu_freq_khz = max_allowed >= 0 ? max_allowed : snapshot.max_cpu_freq_khz;
+
+  const std::array<std::filesystem::path, 3> gpu_paths = {
+      std::filesystem::path("/sys/class/kgsl/kgsl-3d0/gpuclk"),
+      std::filesystem::path("/sys/class/devfreq/kgsl-3d0/cur_freq"),
+      std::filesystem::path("/sys/class/devfreq/3d00000.qcom,kgsl-3d0/cur_freq"),
+  };
+  for (const auto& path : gpu_paths) {
+    const auto value = ReadAndroidSysfsInteger(path);
+    if (value >= 0) {
+      snapshot.gpu_freq_khz = value / (value > 1000000 ? 1000 : 1);
+      break;
+    }
+  }
+  const std::array<std::filesystem::path, 2> gpu_max_paths = {
+      std::filesystem::path("/sys/class/devfreq/kgsl-3d0/max_freq"),
+      std::filesystem::path("/sys/class/devfreq/3d00000.qcom,kgsl-3d0/max_freq"),
+  };
+  for (const auto& path : gpu_max_paths) {
+    const auto value = ReadAndroidSysfsInteger(path);
+    if (value >= 0) {
+      snapshot.gpu_max_freq_khz = value / (value > 1000000 ? 1000 : 1);
+      break;
+    }
+  }
+  if (snapshot.max_cpu_freq_khz > 0 && snapshot.min_cpu_freq_khz > 0 &&
+      snapshot.min_cpu_freq_khz * 100 < snapshot.max_cpu_freq_khz * 65) {
+    snapshot.throttling_hint = 1;
+  } else if (snapshot.min_cpu_freq_khz >= 0 && snapshot.max_cpu_freq_khz >= 0) {
+    snapshot.throttling_hint = 0;
+  }
+  return snapshot;
+}
+
 void StartAndroidPerformanceLog() {
   if (rex::cvar::GetFlagByName("mcla_perf_logging") != "true" ||
       g_android_perf_log_path.empty() || g_perf_log_thread.joinable()) return;
@@ -83,7 +172,8 @@ void StartAndroidPerformanceLog() {
     if (!has_content) {
       output << "elapsed_s,presented_fps,present_count,frame_ms_avg,frame_ms_p50,frame_ms_p95,frame_ms_p99,"
                 "frame_ms_max,frames_over_50ms,fence_submit_wait_ms,fence_readback_wait_ms,"
-                "fence_acquire_wait_ms\n";
+                "fence_acquire_wait_ms,thermal_max_c,cpu_freq_min_khz,cpu_freq_max_khz,"
+                "gpu_freq_khz,gpu_freq_max_khz,throttling_hint\n";
       output.flush();
     }
     using Clock = std::chrono::steady_clock;
@@ -95,12 +185,16 @@ void StartAndroidPerformanceLog() {
       if (now - last_flush < std::chrono::seconds(1)) continue;
       const double now_seconds = std::chrono::duration<double>(now.time_since_epoch()).count();
       const auto summary = g_presented_frames.Snapshot(now_seconds);
+      const auto thermal = ReadAndroidThermalSnapshot();
       output << std::fixed << std::setprecision(3) << std::chrono::duration<double>(
           now - process_started).count() << ',' << summary.presented_fps << ','
              << summary.presentations << ',' << summary.mean_ms << ',' << summary.p50_ms << ','
              << summary.p95_ms << ',' << summary.p99_ms << ',' << summary.max_ms << ','
              << summary.over_50ms
-             << ",unavailable,unavailable,unavailable\n";
+             << ",unavailable,unavailable,unavailable," << thermal.max_temperature_c << ','
+             << thermal.min_cpu_freq_khz << ',' << thermal.max_cpu_freq_khz << ','
+             << thermal.gpu_freq_khz << ',' << thermal.gpu_max_freq_khz << ','
+             << thermal.throttling_hint << '\n';
       output.flush();
       last_flush = now;
       std::error_code size_error;

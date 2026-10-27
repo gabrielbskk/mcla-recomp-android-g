@@ -1080,6 +1080,203 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
     return header
 
 
+ANDROID_FENCE_METRICS_HEADER_MARKER = "// MCLA_ANDROID_FENCE_METRICS_HEADER"
+ANDROID_FENCE_METRICS_SOURCE_MARKER = "// MCLA_ANDROID_FENCE_METRICS_SOURCE"
+ANDROID_FENCE_METRICS_TRACKER_MARKER = "// MCLA_ANDROID_FENCE_METRICS_TRACKER"
+
+
+def patch_android_fence_metrics_header(header: str) -> str:
+    """Expose origin-aware fence-wait counters from the Vulkan command processor."""
+    if ANDROID_FENCE_METRICS_HEADER_MARKER in header:
+        return header
+    for include in ("#include <atomic>\n", "#include <chrono>\n"):
+        if include not in header:
+            header = header.replace("#include <array>\n", "#include <array>\n" + include, 1)
+    anchor = "  bool CanEndSubmissionImmediately() const;\n"
+    if header.count(anchor) != 1:
+        raise SystemExit("Expected one command-processor fence helper anchor")
+    methods = (
+        "  // MCLA_ANDROID_FENCE_METRICS_HEADER\n"
+        "#if REX_PLATFORM_ANDROID\n"
+        "  enum class AndroidFenceWaitOrigin : uint8_t { kSubmit, kReadback, kAcquire };\n"
+        "  bool AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin origin) {\n"
+        "    const AndroidFenceWaitOrigin previous = android_fence_wait_origin_;\n"
+        "    android_fence_wait_origin_ = origin;\n"
+        "    const bool result = AwaitAllQueueOperationsCompletion();\n"
+        "    android_fence_wait_origin_ = previous;\n"
+        "    return result;\n"
+        "  }\n"
+        "  void RecordAndroidFenceWait(VkResult result, uint64_t wait_us);\n"
+        "#endif\n"
+    )
+    header = header.replace(anchor, methods + anchor, 1)
+    fields_anchor = "  std::vector<draw_util::MemExportRange> memexport_ranges_;\n"
+    if header.count(fields_anchor) != 1:
+        raise SystemExit("Expected one command-processor field anchor")
+    fields = (
+        fields_anchor
+        + "#if REX_PLATFORM_ANDROID\n"
+        + "  AndroidFenceWaitOrigin android_fence_wait_origin_ = AndroidFenceWaitOrigin::kSubmit;\n"
+        + "  std::atomic<uint64_t> android_fence_submit_wait_count_{0};\n"
+        + "  std::atomic<uint64_t> android_fence_readback_wait_count_{0};\n"
+        + "  std::atomic<uint64_t> android_fence_acquire_wait_count_{0};\n"
+        + "  std::atomic<uint64_t> android_fence_submit_wait_us_{0};\n"
+        + "  std::atomic<uint64_t> android_fence_readback_wait_us_{0};\n"
+        + "  std::atomic<uint64_t> android_fence_acquire_wait_us_{0};\n"
+        + "#endif\n"
+    )
+    return header.replace(fields_anchor, fields, 1)
+
+
+def patch_android_fence_metrics_command_processor(source: str) -> str:
+    """Instrument command-processor fence waits and synchronous readback waits."""
+    if ANDROID_FENCE_METRICS_SOURCE_MARKER in source:
+        return source
+    if "#include <chrono>\n" not in source:
+        source = source.replace("#include <cstdint>\n", "#include <cstdint>\n#include <chrono>\n", 1)
+    method_anchor = "void VulkanCommandProcessor::CheckSubmissionFenceAndDeviceLoss(uint64_t await_submission) {\n"
+    if source.count(method_anchor) != 1:
+        raise SystemExit("Expected one command-processor fence method")
+    method = (
+        "// MCLA_ANDROID_FENCE_METRICS_SOURCE\n"
+        "#if REX_PLATFORM_ANDROID\n"
+        "void VulkanCommandProcessor::RecordAndroidFenceWait(VkResult result, uint64_t wait_us) {\n"
+        "  const char* origin = \"submit\";\n"
+        "  std::atomic<uint64_t>* count = &android_fence_submit_wait_count_;\n"
+        "  std::atomic<uint64_t>* total_us = &android_fence_submit_wait_us_;\n"
+        "  if (android_fence_wait_origin_ == AndroidFenceWaitOrigin::kReadback) {\n"
+        "    origin = \"readback\";\n"
+        "    count = &android_fence_readback_wait_count_;\n"
+        "    total_us = &android_fence_readback_wait_us_;\n"
+        "  } else if (android_fence_wait_origin_ == AndroidFenceWaitOrigin::kAcquire) {\n"
+        "    origin = \"acquire\";\n"
+        "    count = &android_fence_acquire_wait_count_;\n"
+        "    total_us = &android_fence_acquire_wait_us_;\n"
+        "  }\n"
+        "  const uint64_t count_value = count->fetch_add(1, std::memory_order_relaxed) + 1;\n"
+        "  total_us->fetch_add(wait_us, std::memory_order_relaxed);\n"
+        "  REXLOG_INFO(\"android fence-wait origin={} wait_us={} result={} count={}\", origin, wait_us,\n"
+        "              int(result), count_value);\n"
+        "}\n"
+        "#endif\n\n"
+    )
+    source = source.replace(method_anchor, method + method_anchor, 1)
+    blocking = (
+        "    VkResult wait_result =\n"
+        "        dfn.vkWaitForFences(device, uint32_t(await_submission - submission_completed_),\n"
+        "                            submissions_in_flight_fences_.data(), VK_TRUE, UINT64_MAX);\n"
+    )
+    blocking_replacement = (
+        "    const auto android_fence_wait_start = std::chrono::steady_clock::now();\n"
+        "    VkResult wait_result =\n"
+        "        dfn.vkWaitForFences(device, uint32_t(await_submission - submission_completed_),\n"
+        "                            submissions_in_flight_fences_.data(), VK_TRUE, UINT64_MAX);\n"
+        "    RecordAndroidFenceWait(\n"
+        "        wait_result,\n"
+        "        uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(\n"
+        "                      std::chrono::steady_clock::now() - android_fence_wait_start)\n"
+        "                      .count()));\n"
+    )
+    if source.count(blocking) != 1:
+        raise SystemExit("Expected one blocking command-processor fence wait")
+    source = source.replace(blocking, blocking_replacement, 1)
+    polling = (
+        "    VkResult fence_status =\n"
+        "        dfn.vkWaitForFences(device, 1, &submissions_in_flight_fences_[fences_awaited], VK_TRUE, 0);\n"
+    )
+    polling_replacement = (
+        "    const auto android_fence_wait_start = std::chrono::steady_clock::now();\n"
+        "    VkResult fence_status =\n"
+        "        dfn.vkWaitForFences(device, 1, &submissions_in_flight_fences_[fences_awaited], VK_TRUE, 0);\n"
+        "    RecordAndroidFenceWait(\n"
+        "        fence_status,\n"
+        "        uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(\n"
+        "                      std::chrono::steady_clock::now() - android_fence_wait_start)\n"
+        "                      .count()));\n"
+    )
+    if source.count(polling) != 1:
+        raise SystemExit("Expected one polling command-processor fence wait")
+    source = source.replace(polling, polling_replacement, 1)
+    replacements = [
+        (
+            "  if (!AwaitAllQueueOperationsCompletion()) {\n    REXGPU_ERROR(\"Failed to await completion of Vulkan memexport readback\");",
+            "  if (!AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin::kReadback)) {\n    REXGPU_ERROR(\"Failed to await completion of Vulkan memexport readback\");",
+        ),
+        (
+            "      if (!AwaitAllQueueOperationsCompletion()) {\n        dfn.vkUnmapMemory(device, new_memory);",
+            "      if (!AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin::kReadback)) {\n        dfn.vkUnmapMemory(device, new_memory);",
+        ),
+        (
+            "        if (!AwaitAllQueueOperationsCompletion()) {\n          dfn.vkDestroyBuffer(device, new_buffer, nullptr);",
+            "        if (!AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin::kReadback)) {\n          dfn.vkDestroyBuffer(device, new_buffer, nullptr);",
+        ),
+        (
+            "  } else if (!AwaitAllQueueOperationsCompletion()) {\n    return true;\n  }",
+            "  } else if (!AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin::kReadback)) {\n    return true;\n  }",
+        ),
+        (
+            "    if (!AwaitAllQueueOperationsCompletion()) {\n      return true;\n    }",
+            "    if (!AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin::kReadback)) {\n      return true;\n    }",
+        ),
+        (
+            "  if (!AwaitAllQueueOperationsCompletion()) {\n    return false;\n  }\n\n  const ui::vulkan::VulkanDevice* vulkan_device = GetVulkanDevice();",
+            "  if (!AwaitAllQueueOperationsCompletionWithOrigin(AndroidFenceWaitOrigin::kReadback)) {\n    return false;\n  }\n\n  const ui::vulkan::VulkanDevice* vulkan_device = GetVulkanDevice();",
+        ),
+    ]
+    for original, patched in replacements:
+        if patched in source:
+            continue
+        if original not in source:
+            continue
+        source = source.replace(original, patched)
+    return source
+
+
+def patch_android_fence_metrics_submission_tracker(source: str) -> str:
+    """Instrument UI submission tracker waits as acquire-side waits."""
+    if ANDROID_FENCE_METRICS_TRACKER_MARKER in source:
+        return source
+    if "#include <chrono>\n" not in source:
+        source = source.replace(
+            "#include <cstdint>\n",
+            "#include <cstdint>\n#include <chrono>\n#include <atomic>\n",
+            1,
+        )
+    original = (
+        "        if (dfn.vkWaitForFences(device, 1, &pending_pair.second, VK_TRUE, UINT64_MAX) ==\n"
+        "            VK_SUCCESS) {\n"
+        "          break;\n"
+        "        }\n"
+    )
+    replacement = (
+        "        // MCLA_ANDROID_FENCE_METRICS_TRACKER\n"
+        "        const auto android_acquire_wait_start = std::chrono::steady_clock::now();\n"
+        "        const VkResult android_acquire_wait_result =\n"
+        "            dfn.vkWaitForFences(device, 1, &pending_pair.second, VK_TRUE, UINT64_MAX);\n"
+        "        const uint64_t android_acquire_wait_us = uint64_t(\n"
+        "            std::chrono::duration_cast<std::chrono::microseconds>(\n"
+        "                std::chrono::steady_clock::now() - android_acquire_wait_start)\n"
+        "                .count());\n"
+        "        static std::atomic<uint64_t> android_acquire_wait_count{0};\n"
+        "        REXLOG_INFO(\"android fence-wait origin=acquire wait_us={} result={} count={}\",\n"
+        "                    android_acquire_wait_us, int(android_acquire_wait_result),\n"
+        "                    android_acquire_wait_count.fetch_add(1, std::memory_order_relaxed) + 1);\n"
+        "        if (android_acquire_wait_result == VK_SUCCESS) {\n"
+        "          break;\n"
+        "        }\n"
+    )
+    if source.count(original) != 1:
+        raise SystemExit("Expected one Vulkan submission-tracker fence wait")
+    source = source.replace(original, replacement, 1)
+    if "#include <rex/logging.h>\n" not in source:
+        source = source.replace(
+            "#include <rex/assert.h>\n",
+            "#include <rex/assert.h>\n#include <rex/logging.h>\n",
+            1,
+        )
+    return source
+
+
 def patch_android_vulkan_pipeline_functions(functions: str) -> str:
     """Expose Vulkan 1.0 pipeline-cache functions through ReXGlue's device table."""
     if "XE_UI_VULKAN_FUNCTION(vkCreatePipelineCache)" in functions:
@@ -2300,6 +2497,37 @@ def main() -> None:
         print("Added Android Vulkan driver pipeline-cache load/use/save handling.")
     else:
         print("Android Vulkan driver pipeline-cache handling is already applied.")
+
+    command_processor_header = args.sdk / "include/rex/graphics/vulkan/command_processor.h"
+    command_processor_source = args.sdk / "src/graphics/vulkan/command_processor.cpp"
+    for path in (command_processor_header, command_processor_source):
+        if not path.is_file():
+            raise SystemExit(f"ReXGlue fence instrumentation source not found: {path}")
+    command_header_text = command_processor_header.read_text(encoding="utf-8")
+    patched_command_header_text = patch_android_fence_metrics_header(command_header_text)
+    if patched_command_header_text != command_header_text:
+        command_processor_header.write_text(patched_command_header_text, encoding="utf-8")
+        print("Added Android fence-wait origin counters to the Vulkan command processor header.")
+    else:
+        print("Android command-processor fence-wait counters are already applied.")
+    command_source_text = command_processor_source.read_text(encoding="utf-8")
+    patched_command_source_text = patch_android_fence_metrics_command_processor(command_source_text)
+    if patched_command_source_text != command_source_text:
+        command_processor_source.write_text(patched_command_source_text, encoding="utf-8")
+        print("Added submit/readback fence-wait timing to the Vulkan command processor.")
+    else:
+        print("Android submit/readback fence-wait timing is already applied.")
+
+    submission_tracker = args.sdk / "src/ui/vulkan/vulkan_submission_tracker.cpp"
+    if not submission_tracker.is_file():
+        raise SystemExit(f"ReXGlue Vulkan submission tracker not found: {submission_tracker}")
+    tracker_text = submission_tracker.read_text(encoding="utf-8")
+    patched_tracker_text = patch_android_fence_metrics_submission_tracker(tracker_text)
+    if patched_tracker_text != tracker_text:
+        submission_tracker.write_text(patched_tracker_text, encoding="utf-8")
+        print("Added acquire-side fence-wait timing to the Vulkan submission tracker.")
+    else:
+        print("Android acquire-side fence-wait timing is already applied.")
 
     logging_source = args.sdk / "src/core/logging.cpp"
     if not logging_source.is_file():

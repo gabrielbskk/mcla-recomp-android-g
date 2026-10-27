@@ -1,0 +1,113 @@
+MCLA Recomp Android — estado completo do projeto
+Data: 2026-10-27
+
+1. Identidade do checkout
+
+Projeto: port/recompilação nativa do Midnight Club: Los Angeles (Xbox 360) para Android ARM64.
+Checkout: /data/data/com.termux/files/home/recomp-fix-mxcla-vkcache
+Branch: feature/android-vk-cache
+Último commit confirmado: e5f64e0 test(android): prove persisted cache fallback
+Remote confirmado:
+  git@github.com:gabrielbskk/mcla-recomp-android-g.git
+
+O worktree contém alterações ainda não commitadas. Não houve push nesta rodada. O repositório não deve receber APK, XAPK, OBB, dados do jogo, caches, chaves, keystores ou logs pessoais.
+
+2. Objetivo da rodada atual
+
+O objetivo atual é analisar os logs existentes e preparar uma única build diagnóstica. A build deve permitir simpleperf e registrar fence-waits por origem (submit, readback e acquire), além de telemetria de temperatura/frequência. A regra vigente proíbe instalação, ADB e medição no aparelho até uma solicitação explícita posterior.
+
+3. O que já foi provado
+
+- A reserva da memória guest passa no S23. O rastreio autorizado registra ASharedMemory_create com 4.831.842.304 bytes, errno 0, RLIMIT_AS ilimitado e nove views mapeadas em io-trace-live-20261027-authorized.log:111-115.
+- O runtime passa de Runtime::Setup e inicializa a tabela de funções e o SDL input.
+- O app chega a abrir default.xex, xarchive_audlo.rpf e xarchive_cache.rpf no armazenamento privado. Evidências: io-trace-live-20261027-authorized.log:119, 132-140.
+- O controle PS4 foi reconhecido pelo SDL. Evidência: io-trace-live-20261027-authorized.log:8350-8351. A investigação de gamepad está encerrada por decisão do objetivo atual.
+- O cache Vulkan persistente é carregado, validado por vendorID/deviceID/pipelineCacheUUID e salvo com arquivo temporário e rename. No rastreio, o cache carregou 19.669.098 bytes em io-trace-live-20261027-authorized.log:126.
+- Na execução observada, o cache registrou pipelines criados, tempo acumulado de criação e espera do mutex. Exemplos: linhas 4858, 5072, 6542, 7098, 8356.
+- A suíte Python completa passou: 74 testes em 46,308 s, resultado OK, registrado em mcla-perf-results/unit-test-diagnostic.log.
+- O contador de apresentações reais já existe no caminho de vkQueuePresentKHR. O presenter notifica somente VK_SUCCESS e VK_SUBOPTIMAL_KHR como apresentações aceitas; isso não equivale automaticamente ao FPS percebido na tela.
+
+4. O que foi alterado localmente e ainda não foi commitado
+
+Arquivos modificados:
+
+- scripts/assemble_android_apk.sh: adiciona modo APK_DEBUGGABLE=1. O modo decodifica o APK base com apktool, marca android:debuggable=true, substitui as três bibliotecas ARM64, alinha, assina e valida.
+- scripts/patch_android_rexglue.py: adiciona patch idempotente para medir espera de fences no command processor e no submission tracker, distinguindo submit/readback/acquire.
+- src/mcla_app.cpp: adiciona amostragem de temperatura, frequência mínima/máxima de CPU, frequência atual/máxima da GPU e um campo chamado throttling_hint ao CSV de desempenho.
+- tests/test_android_fence_metrics_patch.py: testa o patch de header, command processor, submission tracker e idempotência.
+
+Os patches do SDK ReXGlue externo são aplicados pelo script; a fonte de verdade deve continuar sendo scripts/patch_android_rexglue.py. O SDK em mcla-build-deps foi alterado para a compilação local e não pertence ao Git.
+
+5. Build diagnóstica
+
+Processo usado: build manual ARM64 via scripts/resume_android_termux_build.sh, sem Gradle. O CMake configurou corretamente e compilou:
+
+- libmain.so: 82.371.856 bytes, gerado em out/build/android-arm64-termux.
+- librexruntime.so: 12.294.904 bytes, gerado no SDK externo.
+- librexgpu-xenos.so: 5.937.616 bytes na última saída válida anterior; a recompilação diagnóstica foi interrompida antes de concluir esta biblioteca.
+
+A compilação foi interrompida durante a etapa rexgpu-xenos, em texture_cache.cpp. Portanto a build diagnóstica NÃO terminou, o APK diagnóstico NÃO foi montado, alinhado ou assinado, e não existe SHA-256 de um APK diagnóstico. APKs antigos no diretório out/apk não representam esta alteração completa.
+
+Avisos observados durante a compilação: -stdlib=libc++ não usado pelo clang do alvo; warning de largura do operando fpcr; std::move pessimizado; inicialização fora de ordem; memcpy/memset em tipos packed/non-trivially-copyable; parâmetros não usados. Nenhum desses avisos foi tratado como causa de crash sem evidência.
+
+6. Evidência de desempenho e seus limites
+
+O relatório anterior contém amostras de present FPS, mas o objetivo atual exige nova captura controlada. Os valores de ticks/s do loop não são FPS apresentado e não devem ser usados como equivalentes.
+
+Na captura autorizada, o loop caiu de 29,9 ticks/s com p95 36,10 ms (linha 4953) para 15,1 ticks/s com máximo 1.410,09 ms (linha 5065), 1,6 ticks/s com p95 738,95 ms (linha 5079), 1,3 ticks/s com p95 832,83 ms (linha 5089) e 1,9 ticks/s com p95 989,74 ms (linha 5887). Isso prova travamento severo do loop naquela janela, mas não identifica sozinho CPU, GPU, I/O ou fence como causa.
+
+Há correlação temporal entre a degradação e:
+
+- crescimento do texture cache de 5 MiB/11 entradas para 102 MiB/2.111 entradas e depois 223 MiB/4.494 entradas (linhas 4954, 5070, 6543, 8357);
+- criação de pipelines crescendo de 7 para 153, 184, 201 e 271, com create_us_total chegando a 1.406.431 e lock_wait_us_total a 544.189 (linhas 4858, 5072, 6542, 7098, 8356);
+- aviso de apresentação pulada por async placeholder draw (linha 199);
+- constantes de textura inválidas (linhas 5056-5058).
+
+Essas relações são correlações. Sem fence-waits reais, perfetto interpretado e perfil de CPU/GPU, não há causa raiz comprovada nem ganho de FPS comprovado.
+
+7. Problemas encontrados na revisão
+
+Crítico para a próxima medição: o CSV de desempenho declara fence_submit_wait_ms, fence_readback_wait_ms e fence_acquire_wait_ms, mas src/mcla_app.cpp ainda grava os três como unavailable. A instrumentação nova escreve eventos no log, porém não os conecta ao agregador usado pelo CSV. Consequência: o relatório não consegue comparar numericamente as três origens por segundo. Próximo passo: criar um snapshot atômico dos contadores no SDK e consumi-lo no flush do CSV; validar primeiro com teste unitário e depois com uma execução diagnóstica.
+
+Crítico para interpretação térmica: throttling_hint é uma heurística baseada na menor frequência instantânea entre CPUs comparada com a frequência máxima permitida. Isso pode marcar heterogeneidade normal entre núcleos como throttling. Consequência: não declarar limitação térmica a partir desse campo isolado. Próximo passo: registrar série temporal de temperatura, frequência por cluster, carga e estado de thermal zone; classificar throttling somente quando a série mostrar queda sustentada sob carga.
+
+Alto risco de manutenção: o patch altera três arquivos do SDK externo e depende de âncoras textuais exatas. Consequência: uma atualização do ReXGlue pode quebrar o patch ou aplicar a instrumentação em uma área semanticamente diferente. Próximo passo: manter testes de âncora/idempotência, registrar a versão do SDK e fazer o script falhar com mensagem clara quando a estrutura mudar.
+
+Alto risco de desempenho: a instrumentação registra REXLOG_INFO em cada fence-wait. Consequência: a própria telemetria pode aumentar contenção e distorcer a medição. Próximo passo: usar contadores por thread e flush agregado por segundo; deixar logs individuais apenas em modo de diagnóstico explícito.
+
+Pendência de qualidade: tests/test_android_fence_metrics_patch.py verifica transformação textual e idempotência, mas não compila o código C++ resultante nem prova que os contadores chegam ao CSV. Consequência: a suíte de 74 testes não é prova de linkagem nem de telemetria funcional no APK. Próximo passo: acrescentar teste do formato do snapshot e uma compilação mínima dos trechos instrumentados.
+
+8. Mapa do caminho relevante
+
+- Criação de pipelines: SDK externo src/graphics/vulkan/pipeline_cache.cpp:3715-3734. A chamada vkCreateGraphicsPipelines usa driver_pipeline_cache_ sob driver_pipeline_cache_lock_.
+- Cache persistente: src/graphics/vulkan/pipeline_cache.cpp:310-373 carrega e valida o cabeçalho; :376-444 salva em .tmp e renomeia; :446-456 imprime métricas.
+- Salvamento periódico: src/graphics/vulkan/pipeline_cache.cpp:3925-3944.
+- Streaming/cache de texturas: src/graphics/vulkan/texture_cache.cpp:528-558, :996, :1117, :1216 e :1789; estatísticas agregadas aparecem em src/graphics/pipeline/texture/cache.cpp:317.
+- Aviso de placeholder: src/graphics/vulkan/command_processor.cpp:2301.
+- Constante de textura inválida: src/graphics/pipeline/texture/cache.cpp:927-942.
+- Esperas de fences no command processor: após o patch, src/graphics/vulkan/command_processor.cpp:4949-5021.
+- Espera do submission tracker: SDK externo src/ui/vulkan/vulkan_submission_tracker.cpp:121-155.
+- Aquisição e apresentação: SDK externo src/ui/vulkan/vulkan_presenter.cpp:1591-1605 e :2261-2269.
+
+9. O que eu estava fazendo e o que faria em seguida
+
+Eu estava terminando a única build diagnóstica no Termux ARM64. O CMake já havia concluído libmain e librexruntime, mas a compilação foi pausada na biblioteca gráfica. Ao retomar, o procedimento correto é continuar o mesmo build incremental, sem apagar o diretório de saída.
+
+Depois da compilação completa, o fluxo é: compilar o DEX pelo script manual existente; montar uma única variante debuggable com base em base-with-measurement-dex.apk; copiar as três bibliotecas; zipalign; assinar somente com a debug.keystore fora do repositório; validar com apksigner e verify_android_apk.py; calcular SHA-256; e entregar o APK para teste posterior. Não instalar nem pedir ADB automaticamente.
+
+Somente após o usuário solicitar explicitamente o teste no S23, usar os extras de intent para duas execuções de 20 segundos por cena/configuração. O relatório deve incluir present FPS, p50/p95/p99, quadros acima de 50/100 ms, top -H, temperatura/frequências, GPU busy quando disponível, simpleperf, perfetto, fence-waits por origem, pipelines por segundo e cache hit/miss. Sem esses números, não propor otimização de renderer.
+
+10. Instruções para a próxima IA
+
+1. Leia AGENTS.md na raiz e este arquivo antes de agir.
+2. Confirme branch, status, diff, histórico, .gitignore e remote. O remote permitido é git@github.com:gabrielbskk/mcla-recomp-android-g.git.
+3. Não use Gradle no Termux. Use o toolchain ARM64 e scripts já existentes.
+4. Não procure dados do jogo para incluir no Git. default.xex, RPFs, BIKs, saves, APKs, caches e logs pessoais ficam fora do commit.
+5. Não trate a build antiga MCLA-measurement-v0.1.2-vkcache-io-trace.apk como diagnóstico atual. Ela tem SHA-256 eb61300dd80b1e8fe321aa4be343c7e4042a663aab863308cacf928d906d4d69 e certificado de teste c12a43023ed864654e56bed81d91e2d0fd98e46c5f22cbec32d5b585661ca7aa, mas não contém necessariamente as alterações desta rodada.
+6. Antes de instalar, compare o certificado da chave com o app instalado e peça ADB ao usuário. Nunca desinstale ou limpe dados sem autorização.
+7. Antes de qualquer push, liste os arquivos seguros e confirme que não há segredos, binários ou dados pessoais.
+8. Se uma abordagem falhar três vezes, pare e registre o erro, as tentativas e o próximo passo. Não declare estabilidade, causa raiz ou ganho de FPS sem medição.
+
+11. Veredito
+
+O projeto já tem uma base funcional: memória guest, inicialização do runtime, leitura dos assets principais, controle e cache Vulkan foram demonstrados. O problema de desempenho urbano continua grave e a causa ainda não foi isolada. A telemetria diagnóstica foi preparada, os testes de transformação passaram, mas a build diagnóstica foi interrompida antes do APK e os fence-waits ainda não chegam ao CSV. O próximo marco confiável é concluir essa build e coletar uma medição controlada; qualquer otimização antes disso seria especulativa.

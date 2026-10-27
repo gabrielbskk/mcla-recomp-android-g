@@ -20,17 +20,39 @@ done
 zipalign_bin="${ZIPALIGN:-zipalign}"
 apksigner_bin="${APKSIGNER:-apksigner}"
 aapt2_bin="${AAPT2:-aapt2}"
+apktool_bin="${APKTOOL:-apktool}"
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/mcla-apk.XXXXXX")"
 unsigned="$work_dir/unsigned.apk"
 aligned="$work_dir/aligned.apk"
 mkdir -p "$(dirname -- "$OUTPUT_APK")"
 
-unzip -q "$BASE_APK" -d "$work_dir/tree"
-find "$work_dir/tree/META-INF" -type f -delete 2>/dev/null || true
-cp "$LIBMAIN" "$work_dir/tree/lib/arm64-v8a/libmain.so"
-cp "$REXRUNTIME" "$work_dir/tree/lib/arm64-v8a/librexruntime.so"
-cp "$REXGPU_XENOS" "$work_dir/tree/lib/arm64-v8a/librexgpu-xenos.so"
-(cd "$work_dir/tree" && zip -qr -0 "$unsigned" .)
+if [[ "${APK_DEBUGGABLE:-0}" == "1" ]]; then
+  "$apktool_bin" d -f -s -o "$work_dir/tree" "$BASE_APK" >/dev/null
+  python3 - "$work_dir/tree/AndroidManifest.xml" <<'PY'
+from pathlib import Path
+import sys
+
+manifest = Path(sys.argv[1])
+text = manifest.read_text(encoding="utf-8")
+needle = '<application '
+if 'android:debuggable="true"' not in text:
+    if needle not in text:
+        raise SystemExit("application element not found in decoded AndroidManifest.xml")
+    text = text.replace(needle, '<application android:debuggable="true" ', 1)
+    manifest.write_text(text, encoding="utf-8")
+PY
+  cp "$LIBMAIN" "$work_dir/tree/lib/arm64-v8a/libmain.so"
+  cp "$REXRUNTIME" "$work_dir/tree/lib/arm64-v8a/librexruntime.so"
+  cp "$REXGPU_XENOS" "$work_dir/tree/lib/arm64-v8a/librexgpu-xenos.so"
+  "$apktool_bin" b "$work_dir/tree" -o "$unsigned" >/dev/null
+else
+  unzip -q "$BASE_APK" -d "$work_dir/tree"
+  find "$work_dir/tree/META-INF" -type f -delete 2>/dev/null || true
+  cp "$LIBMAIN" "$work_dir/tree/lib/arm64-v8a/libmain.so"
+  cp "$REXRUNTIME" "$work_dir/tree/lib/arm64-v8a/librexruntime.so"
+  cp "$REXGPU_XENOS" "$work_dir/tree/lib/arm64-v8a/librexgpu-xenos.so"
+  (cd "$work_dir/tree" && zip -qr -0 "$unsigned" .)
+fi
 "$zipalign_bin" -f -p 4 "$unsigned" "$aligned"
 "$apksigner_bin" sign \
   --ks "$APK_KEYSTORE" \

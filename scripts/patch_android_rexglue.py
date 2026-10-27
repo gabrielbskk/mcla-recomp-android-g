@@ -703,15 +703,12 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
 def patch_android_pipeline_cache_lock_wait(source: str) -> str:
     """Measure time waiting for the shared Vulkan pipeline-cache mutex."""
     create_metric_marker = "android_vk_pipeline_cache_lock_wait_us_total_.fetch_add("
-    if create_metric_marker in source:
-        return source
-    anchor_count = source.count(PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR)
-    if anchor_count == 0:
-        return source
-    if anchor_count != 1:
-        raise SystemExit("Unsupported Android pipeline cache lock-wait variant")
-    source = source.replace(PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR,
-                            PIPELINE_CACHE_CREATE_LOCK_WAIT_PATCH, 1)
+    if create_metric_marker not in source:
+        anchor_count = source.count(PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR)
+        if anchor_count != 1:
+            raise SystemExit("Unsupported Android pipeline cache lock-wait variant")
+        source = source.replace(PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR,
+                                PIPELINE_CACHE_CREATE_LOCK_WAIT_PATCH, 1)
     old_log = (
         '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={}",\n'
         "      android_vk_cache_loaded_.load(std::memory_order_relaxed),\n"

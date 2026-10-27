@@ -103,7 +103,7 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
     def test_upgrades_current_cache_save_without_reapplying_unrelated_patches(self):
-        current = PATCHER.PIPELINE_CACHE_SOURCE_CONSTRUCTOR_PATCH
+        current = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
         upgraded = PATCHER.patch_android_vulkan_pipeline_cache(current)
         self.assertIn("driver_pipeline_cache_save_lock_", upgraded)
         self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache(upgraded), upgraded)
@@ -121,6 +121,17 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
             "  std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);",
             1,
         )
+        partial += """
+VkResult VulkanPipelineCache::EnsurePipelineCreated() {
+  VkResult create_result;
+  const auto android_pipeline_create_start = std::chrono::steady_clock::now();
+  {
+    std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
+    create_result = dfn.vkCreateGraphicsPipelines(device, driver_pipeline_cache_, 1,
+                                                   &pipeline_create_info, nullptr, &pipeline);
+  }
+}
+"""
         repaired = PATCHER.patch_android_vulkan_pipeline_cache(partial)
         self.assertEqual(
             repaired.count("std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);"),
@@ -133,7 +144,7 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
         self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache(repaired), repaired)
 
     def test_orders_cache_destroy_after_serialized_saves(self):
-        source = PATCHER.PIPELINE_CACHE_SOURCE_CONSTRUCTOR_PATCH + """
+        source = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE) + """
 void VulkanPipelineCache::Shutdown() {
   const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -255,6 +266,24 @@ void VulkanPipelineCache::Shutdown() {
         upgraded = PATCHER.patch_android_vulkan_pipeline_cache(current)
         self.assertIn("android_vk_pipeline_cache_lock_wait_us_total_", upgraded)
         self.assertIn("android_pipeline_cache_lock_wait_start", upgraded)
+
+    def test_repairs_lock_wait_metric_when_only_the_log_is_legacy(self):
+        current = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        current = current.replace(
+            '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={} "\n'
+            '      "android_vk_pipeline_cache_lock_wait_us_total={}",\n',
+            '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={}",\n',
+            1,
+        )
+        current = current.replace(
+            "      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed),\n"
+            "      android_vk_pipeline_cache_lock_wait_us_total_.load(std::memory_order_relaxed));",
+            "      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed));",
+            1,
+        )
+        repaired = PATCHER.patch_android_vulkan_pipeline_cache(current)
+        self.assertIn('"android_vk_pipeline_cache_lock_wait_us_total={}"', repaired)
+        self.assertIn("android_vk_pipeline_cache_lock_wait_us_total_.load", repaired)
 
     def test_rejects_unknown_source(self):
         with self.assertRaises(SystemExit):

@@ -65,7 +65,15 @@ Há correlação temporal entre a degradação e:
 
 Essas relações são correlações. Sem fence-waits reais, perfetto interpretado e perfil de CPU/GPU, não há causa raiz comprovada nem ganho de FPS comprovado.
 
-7. Problemas encontrados na revisão
+7. Rastreio de assets
+
+O rastreio autorizado confirmou `default.xex` em `io-trace-live-20261027-authorized.log:119`, `xarchive_audlo.rpf` em `:132-136` e `xarchive_cache.rpf` em `:137-141`. O runtime usa o armazenamento privado `files/game`.
+
+Uma varredura em todas as capturas encontrou cinco tentativas de abrir `game:\intro720.bik`, todas falhando com `0xc000000f`: `matrix2/1080-run1/public-log-1793079377-1793079397.txt:397`, `1080-run1/public-log-1793079004-1793079025.txt:397`, `720-run1/public-log-1793079152-1793079172.txt:397`, `540-run1/public-log-1793079236-1793079256.txt:397` e `diagnostic-city-1793079450/base/public-log-1793079451-1793079472.txt:397`. Portanto, `.bik` é requisitado pelo runtime, mas ainda não há prova de que a ausência impeça ou não a seleção de carros.
+
+Não houve abertura observada de `xarchive_audio.rpf`, `xarchive_music.rpf`, `nxeart` ou `root_directory_padding.pad`. Esses arquivos permanecem não classificados: ausência no log não prova que sejam opcionais ou ignoráveis. Também existem falhas de arquivos `.loc` em algumas capturas, que não foram usadas como prova de causa do travamento.
+
+8. Problemas encontrados na revisão
 
 Crítico para a próxima medição: o CSV de desempenho declara fence_submit_wait_ms, fence_readback_wait_ms e fence_acquire_wait_ms, mas src/mcla_app.cpp ainda grava os três como unavailable. A instrumentação nova escreve eventos no log, porém não os conecta ao agregador usado pelo CSV. Consequência: o relatório não consegue comparar numericamente as três origens por segundo. Próximo passo: criar um snapshot atômico dos contadores no SDK e consumi-lo no flush do CSV; validar primeiro com teste unitário e depois com uma execução diagnóstica.
 
@@ -77,7 +85,7 @@ Alto risco de desempenho: a instrumentação registra REXLOG_INFO em cada fence-
 
 Pendência de qualidade: tests/test_android_fence_metrics_patch.py verifica transformação textual e idempotência, mas não compila o código C++ resultante nem prova que os contadores chegam ao CSV. Consequência: a suíte de 74 testes não é prova de linkagem nem de telemetria funcional no APK. Próximo passo: acrescentar teste do formato do snapshot e uma compilação mínima dos trechos instrumentados.
 
-8. Mapa do caminho relevante
+9. Mapa do caminho relevante
 
 - Criação de pipelines: SDK externo src/graphics/vulkan/pipeline_cache.cpp:3715-3734. A chamada vkCreateGraphicsPipelines usa driver_pipeline_cache_ sob driver_pipeline_cache_lock_.
 - Cache persistente: src/graphics/vulkan/pipeline_cache.cpp:310-373 carrega e valida o cabeçalho; :376-444 salva em .tmp e renomeia; :446-456 imprime métricas.
@@ -89,7 +97,7 @@ Pendência de qualidade: tests/test_android_fence_metrics_patch.py verifica tran
 - Espera do submission tracker: SDK externo src/ui/vulkan/vulkan_submission_tracker.cpp:121-155.
 - Aquisição e apresentação: SDK externo src/ui/vulkan/vulkan_presenter.cpp:1591-1605 e :2261-2269.
 
-9. O que eu estava fazendo e o que faria em seguida
+10. O que eu estava fazendo e o que faria em seguida
 
 Eu estava terminando a única build diagnóstica no Termux ARM64. A compilação incremental foi retomada e concluiu as três bibliotecas, o DEX e o APK. A etapa seguinte é instalar e medir somente quando o ADB voltar; o endpoint fornecido foi `100.89.26.102:45679`, mas a conexão caiu antes da instalação.
 
@@ -97,7 +105,7 @@ Depois da compilação completa, o fluxo é: compilar o DEX pelo script manual e
 
 Somente após o usuário solicitar explicitamente o teste no S23, usar os extras de intent para duas execuções de 20 segundos por cena/configuração. O relatório deve incluir present FPS, p50/p95/p99, quadros acima de 50/100 ms, top -H, temperatura/frequências, GPU busy quando disponível, simpleperf, perfetto, fence-waits por origem, pipelines por segundo e cache hit/miss. Sem esses números, não propor otimização de renderer.
 
-10. Instruções para a próxima IA
+11. Instruções para a próxima IA
 
 1. Leia AGENTS.md na raiz e este arquivo antes de agir.
 2. Confirme branch, status, diff, histórico, .gitignore e remote. O remote permitido é git@github.com:gabrielbskk/mcla-recomp-android-g.git.
@@ -108,6 +116,6 @@ Somente após o usuário solicitar explicitamente o teste no S23, usar os extras
 7. Antes de qualquer push, liste os arquivos seguros e confirme que não há segredos, binários ou dados pessoais.
 8. Se uma abordagem falhar três vezes, pare e registre o erro, as tentativas e o próximo passo. Não declare estabilidade, causa raiz ou ganho de FPS sem medição.
 
-11. Veredito
+12. Veredito
 
 O projeto já tem uma base funcional: memória guest, inicialização do runtime, leitura dos assets principais, controle e cache Vulkan foram demonstrados. O problema de desempenho urbano continua grave e a causa ainda não foi isolada. A telemetria diagnóstica foi preparada, os testes de transformação passaram e o APK diagnóstico foi validado localmente. Ainda faltam a instalação/medição no S23 e a integração dos fence-waits no CSV; qualquer otimização antes desses números seria especulativa.

@@ -112,6 +112,26 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
         self.assertIn("std::mutex driver_pipeline_cache_save_lock_;", header)
         self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache_header(header), header)
 
+    def test_repairs_partial_save_lock_patch_without_duplicate_initialize_lock(self):
+        partial = PATCHER.PIPELINE_CACHE_SOURCE_CONSTRUCTOR_PATCH.replace(
+            "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n"
+            "  std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);",
+            "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n"
+            "  std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);\n"
+            "  std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);",
+            1,
+        )
+        repaired = PATCHER.patch_android_vulkan_pipeline_cache(partial)
+        self.assertEqual(
+            repaired.count("std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);"),
+            2,
+        )
+        self.assertIn(
+            "std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);",
+            repaired,
+        )
+        self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache(repaired), repaired)
+
     def test_adds_validated_initial_data_and_atomic_write(self):
         patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
 

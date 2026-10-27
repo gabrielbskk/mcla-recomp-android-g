@@ -686,14 +686,29 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
 
 def patch_android_pipeline_cache_save_lock(source: str) -> str:
     """Release the compiler/cache mutex before file I/O; serialize saves separately."""
-    if "std::mutex> save_lock(driver_pipeline_cache_save_lock_)" in source:
+    save_signature = "void VulkanPipelineCache::SaveAndroidPipelineCache() {\n"
+    save_start = source.find(save_signature)
+    save_end = source.find("void VulkanPipelineCache::LogAndroidPipelineCacheMetrics()",
+                            save_start)
+    save_body = source[save_start:save_end] if save_start >= 0 and save_end > save_start else ""
+    save_lock_marker = "  std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);\n"
+    if (save_lock_marker in save_body and
+            "  std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);" in save_body and
+            "  lock.unlock();\n" in save_body):
         return source
-    replacements = (
-        (
-            "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n",
-            "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n"
-            "  std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);\n",
-        ),
+    init_signature = "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n"
+    init_start = source.find(init_signature)
+    init_end = source.find(save_signature, init_start)
+    init_body = source[init_start:init_end] if init_start >= 0 and init_end > init_start else ""
+    replacements = []
+    if save_lock_marker not in init_body:
+        replacements.append(
+            (
+                init_signature,
+                init_signature + save_lock_marker,
+            )
+        )
+    replacements.extend((
         (
             "void VulkanPipelineCache::SaveAndroidPipelineCache() {\n"
             "  std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);",
@@ -720,7 +735,7 @@ def patch_android_pipeline_cache_save_lock(source: str) -> str:
             "    output.close();  // Check buffered write/close errors before replacing the old cache.\n"
             "    if (!output) {",
         ),
-    )
+    ))
     for original, replacement in replacements:
         if source.count(original) != 1:
             raise SystemExit("Unsupported Android pipeline cache save-lock variant")

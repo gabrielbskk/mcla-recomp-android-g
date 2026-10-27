@@ -43,9 +43,12 @@ changing to per-thread caches before those measurements would be speculative.
 
 ## Validation status
 
-- Focused pipeline-cache tests: **14 passed**.
-- Full Python suite: **65 passed**.
+- Focused pipeline-cache tests: **15 passed**.
+- Full Python suite: **66 passed**.
 - `git diff --check`: clean after the last commit.
+- `clang-tidy` was attempted but could not start because the existing
+  `compile_commands.json` points to a missing `.cache/mcla-build-deps` directory;
+  native analyzer output is therefore still unavailable.
 - No new APK, ADB installation, FPS measurement, or performance claim.
 
 The next justified build is a measurement build that reports Xenos-cache lock

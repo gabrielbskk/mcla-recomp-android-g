@@ -89,6 +89,67 @@ DYN_LIBRARY_PATCH = (
     "  bool LoadFromHandle(void* handle) { Close(); handle_ = handle; return handle_ != nullptr; }\n",
 )
 
+ANDROID_GPU_PLUGIN_LOADER_PATCH_MARKER = "// MCLA_ANDROID_GPU_PLUGIN_LOADER_PATCH"
+
+
+def patch_android_gpu_plugin_loader(source: str) -> str:
+    """Load bundled GPU plugins through Android's app linker namespace.
+
+    On Android /proc/self/exe points at app_process, not the APK native
+    library directory.  Resolving a plugin relative to that executable
+    therefore incorrectly targets /system/bin.  dlopen by the soname lets the
+    Android linker resolve lib/arm64-v8a/librexgpu-*.so from the app namespace.
+    """
+    if ANDROID_GPU_PLUGIN_LOADER_PATCH_MARKER in source:
+        return source
+
+    original = """  auto path = rex::filesystem::GetExecutableFolder() / PluginFileName(name);
+  if (!std::filesystem::exists(path)) {
+    REXSYS_ERROR(
+        \"GPU plugin '{}' not found at {}. Stage it next to the executable \"
+        \"(GPU_PLUGINS {} in rexglue_configure_target).\",
+        name, path.string(), name);
+    return nullptr;
+  }
+
+  platform::DynamicLibrary library;
+  if (!library.Load(path, platform::SymbolResolution::kImmediate)) {
+    REXSYS_ERROR(\"GPU plugin '{}' failed to load: {}\", name, path.string());
+    return nullptr;
+  }
+"""
+    replacement = """  const std::string filename = PluginFileName(name);
+  std::filesystem::path path;
+  platform::DynamicLibrary library;
+#if REX_PLATFORM_ANDROID
+  // MCLA_ANDROID_GPU_PLUGIN_LOADER_PATCH: app_process is in /system/bin;
+  // resolve the bundled .so by name in the app's linker namespace instead.
+  path = filename;
+  if (!library.Load(path, platform::SymbolResolution::kImmediate)) {
+    REXSYS_ERROR(\"GPU plugin '{}' failed to load from Android linker namespace: {}\", name,
+                 filename);
+    return nullptr;
+  }
+#else
+  path = rex::filesystem::GetExecutableFolder() / filename;
+  if (!std::filesystem::exists(path)) {
+    REXSYS_ERROR(
+        \"GPU plugin '{}' not found at {}. Stage it next to the executable \"
+        \"(GPU_PLUGINS {} in rexglue_configure_target).\",
+        name, path.string(), name);
+    return nullptr;
+  }
+
+  if (!library.Load(path, platform::SymbolResolution::kImmediate)) {
+    REXSYS_ERROR(\"GPU plugin '{}' failed to load: {}\", name, path.string());
+    return nullptr;
+  }
+#endif
+"""
+    if source.count(original) != 1:
+        raise SystemExit("Expected one ReXGlue GPU plugin loader block")
+    return source.replace(original, replacement, 1)
+
 VULKAN_LOADER_PATCH = (
     "#else\n"
     "  loader_loaded = vulkan_instance->loader_.Load(platform::lib_names::kVulkanLoader);\n"
@@ -1857,6 +1918,17 @@ def patch_android_platform_files(sdk: Path) -> None:
         print(f"Added {surface_source}.")
     elif surface_source.read_text(encoding="utf-8") != source:
         raise SystemExit(f"Unexpected existing Android surface source: {surface_source}")
+
+    plugin_loader = sdk / "src/system/gpu_plugin_loader.cpp"
+    if not plugin_loader.is_file():
+        raise SystemExit(f"ReXGlue GPU plugin loader source not found: {plugin_loader}")
+    plugin_loader_text = plugin_loader.read_text(encoding="utf-8")
+    patched_plugin_loader_text = patch_android_gpu_plugin_loader(plugin_loader_text)
+    if patched_plugin_loader_text != plugin_loader_text:
+        plugin_loader.write_text(patched_plugin_loader_text, encoding="utf-8")
+        print("Added Android GPU plugin loading through the app linker namespace.")
+    else:
+        print("Android GPU plugin linker-namespace loading is already applied.")
 
 
 

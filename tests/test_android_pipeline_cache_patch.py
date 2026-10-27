@@ -122,6 +122,27 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
                                  text=True, timeout=15)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
+    def test_init_retries_rejected_persisted_cache_with_empty_cache(self):
+        compiler = shutil.which("clang++") or shutil.which("c++")
+        if not compiler:
+            self.skipTest("C++ compiler required")
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        start = patched.index(
+            "void VulkanPipelineCache::InitializeAndroidPipelineCache(")
+        end = patched.index("void VulkanPipelineCache::SaveAndroidPipelineCache()", start)
+        method = patched[start:end]
+        harness = (ROOT / "tests/pipeline_cache_init_harness.cpp").read_text()
+        with tempfile.TemporaryDirectory(prefix="mcla-cache-init-") as directory:
+            source = Path(directory) / "test.cpp"
+            binary = Path(directory) / "test"
+            source.write_text(harness.replace("// INSERT_INIT_METHOD", method))
+            build = subprocess.run([compiler, "-std=c++17", "-pthread", str(source),
+                                    "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            run = subprocess.run([str(binary)], cwd=directory, capture_output=True,
+                                 text=True, timeout=15)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
     def test_upgrades_current_cache_save_without_reapplying_unrelated_patches(self):
         current = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
         upgraded = PATCHER.patch_android_vulkan_pipeline_cache(current)

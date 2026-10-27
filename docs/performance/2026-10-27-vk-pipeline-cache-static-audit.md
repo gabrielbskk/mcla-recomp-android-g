@@ -26,6 +26,8 @@ run was performed for this audit.
   can acquire the cache mutex while a save is doing file I/O, and that a new
   pipeline leaves the dirty bit set for a later save. It also exercises the
   `VK_INCOMPLETE` growth/retry path.
+- `tests/pipeline_cache_init_harness.cpp` proves that a driver rejection of
+  persisted bytes retries with an empty cache and leaves the session usable.
 
 ## Remaining blockers before a build
 
@@ -46,9 +48,9 @@ changing to per-thread caches before those measurements would be speculative.
 
 ## Validation status
 
-- Focused pipeline-cache tests: **19 passed** (including persisted-cache
+- Focused pipeline-cache tests: **20 passed** (including persisted-cache
   rejection fallback and `VK_INCOMPLETE` growth retry).
-- Full Python suite: **70 passed**.
+- Full Python suite: **71 passed**.
 - `git diff --check`: clean after the last commit.
 - `clang-tidy` was attempted but could not start because the existing
   `compile_commands.json` points to a missing `.cache/mcla-build-deps` directory;

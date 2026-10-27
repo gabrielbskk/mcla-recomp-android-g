@@ -223,6 +223,39 @@ void VulkanPipelineCache::Shutdown() {
         self.assertIn("lock.unlock();", patched)
         self.assertIn("android_vk_pipelines_created_.fetch_add", patched)
 
+    def test_emits_cache_lock_wait_metric_for_worker_contention(self):
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        self.assertIn("android_vk_pipeline_cache_lock_wait_us_total_", patched)
+        self.assertIn("android_pipeline_cache_lock_wait_start", patched)
+        self.assertIn("std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);", patched)
+
+    def test_upgrades_existing_cache_source_with_lock_wait_metric(self):
+        current = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        current = current.replace(
+            PATCHER.PIPELINE_CACHE_CREATE_LOCK_WAIT_PATCH,
+            PATCHER.PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR,
+            1,
+        )
+        current = current.replace(
+            '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={} "\n'
+            '      "android_vk_pipeline_cache_lock_wait_us_total={}",\n',
+            '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={}",\n',
+            1,
+        )
+        current = current.replace(
+            "      android_vk_pipeline_cache_lock_wait_us_total_.load(std::memory_order_relaxed),\n",
+            "",
+            1,
+        )
+        current = current.replace(
+            "      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed),\n",
+            "      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed));\n",
+            1,
+        )
+        upgraded = PATCHER.patch_android_vulkan_pipeline_cache(current)
+        self.assertIn("android_vk_pipeline_cache_lock_wait_us_total_", upgraded)
+        self.assertIn("android_pipeline_cache_lock_wait_start", upgraded)
+
     def test_rejects_unknown_source(self):
         with self.assertRaises(SystemExit):
             PATCHER.patch_android_vulkan_pipeline_cache("void DifferentPipelineCache() {}")

@@ -559,12 +559,14 @@ void VulkanPipelineCache::SaveAndroidPipelineCache() {
 void VulkanPipelineCache::LogAndroidPipelineCacheMetrics() {
   REXGPU_INFO(
       "android_vk_cache_loaded={} android_vk_cache_rejected={} android_vk_cache_saved={} "
-      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={}",
+      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={} "
+      "android_vk_pipeline_cache_lock_wait_us_total={}",
       android_vk_cache_loaded_.load(std::memory_order_relaxed),
       android_vk_cache_rejected_.load(std::memory_order_relaxed),
       android_vk_cache_saved_.load(std::memory_order_relaxed),
       android_vk_pipelines_created_.load(std::memory_order_relaxed),
-      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed));
+      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed),
+      android_vk_pipeline_cache_lock_wait_us_total_.load(std::memory_order_relaxed));
 }
 
 bool VulkanPipelineCache::Initialize() {
@@ -617,13 +619,26 @@ PIPELINE_CACHE_DESTROY_PATCH = """  const VkDevice device = vulkan_device->devic
 
 PIPELINE_CACHE_CREATE_ANCHOR = """VkResult create_result = dfn.vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
                                                          &pipeline_create_info, nullptr, &pipeline);"""
-PIPELINE_CACHE_CREATE_PATCH = """VkResult create_result;
-  const auto android_pipeline_create_start = std::chrono::steady_clock::now();
+PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR = """  const auto android_pipeline_create_start = std::chrono::steady_clock::now();
   {
     std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
     create_result = dfn.vkCreateGraphicsPipelines(device, driver_pipeline_cache_, 1,
                                                    &pipeline_create_info, nullptr, &pipeline);
   }"""
+PIPELINE_CACHE_CREATE_LOCK_WAIT_PATCH = """  const auto android_pipeline_create_start = std::chrono::steady_clock::now();
+  const auto android_pipeline_cache_lock_wait_start = std::chrono::steady_clock::now();
+  {
+    std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);
+    android_vk_pipeline_cache_lock_wait_us_total_.fetch_add(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - android_pipeline_cache_lock_wait_start)
+            .count(),
+        std::memory_order_relaxed);
+    create_result = dfn.vkCreateGraphicsPipelines(device, driver_pipeline_cache_, 1,
+                                                   &pipeline_create_info, nullptr, &pipeline);
+  }"""
+PIPELINE_CACHE_CREATE_PATCH = """VkResult create_result;
+""" + PIPELINE_CACHE_CREATE_LOCK_WAIT_PATCH
 
 PIPELINE_CACHE_STORAGE_THREAD_ANCHOR = (
     "  bool flush_pipelines = false;\n\n"
@@ -683,6 +698,43 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
     "    android_vk_pipelines_created_.fetch_add(1, std::memory_order_relaxed);\n"
     "  }"
 )
+
+
+def patch_android_pipeline_cache_lock_wait(source: str) -> str:
+    """Measure time waiting for the shared Vulkan pipeline-cache mutex."""
+    create_metric_marker = "android_vk_pipeline_cache_lock_wait_us_total_.fetch_add("
+    if create_metric_marker in source:
+        return source
+    anchor_count = source.count(PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR)
+    if anchor_count == 0:
+        return source
+    if anchor_count != 1:
+        raise SystemExit("Unsupported Android pipeline cache lock-wait variant")
+    source = source.replace(PIPELINE_CACHE_CREATE_LOCK_WAIT_ANCHOR,
+                            PIPELINE_CACHE_CREATE_LOCK_WAIT_PATCH, 1)
+    old_log = (
+        '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={}",\n'
+        "      android_vk_cache_loaded_.load(std::memory_order_relaxed),\n"
+        "      android_vk_cache_rejected_.load(std::memory_order_relaxed),\n"
+        "      android_vk_cache_saved_.load(std::memory_order_relaxed),\n"
+        "      android_vk_pipelines_created_.load(std::memory_order_relaxed),\n"
+        "      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed));"
+    )
+    new_log = (
+        '      "android_vk_pipelines_created={} android_vk_pipeline_create_us_total={} "\n'
+        '      "android_vk_pipeline_cache_lock_wait_us_total={}",\n'
+        "      android_vk_cache_loaded_.load(std::memory_order_relaxed),\n"
+        "      android_vk_cache_rejected_.load(std::memory_order_relaxed),\n"
+        "      android_vk_cache_saved_.load(std::memory_order_relaxed),\n"
+        "      android_vk_pipelines_created_.load(std::memory_order_relaxed),\n"
+        "      android_vk_pipeline_create_us_total_.load(std::memory_order_relaxed),\n"
+        "      android_vk_pipeline_cache_lock_wait_us_total_.load(std::memory_order_relaxed));"
+    )
+    if '"android_vk_pipeline_cache_lock_wait_us_total={}"' in source:
+        return source
+    if source.count(old_log) != 1:
+        raise SystemExit("Unsupported Android pipeline cache metrics variant")
+    return source.replace(old_log, new_log, 1)
 
 
 def patch_android_pipeline_cache_save_lock(source: str) -> str:
@@ -855,7 +907,8 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                 if source.count(original) == 0:
                     raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
                 source = source.replace(original, replacement)
-        return patch_android_pipeline_cache_save_lock(source)
+        return patch_android_pipeline_cache_lock_wait(
+            patch_android_pipeline_cache_save_lock(source))
     anchors = (
         PIPELINE_CACHE_SOURCE_INCLUDE_ANCHOR,
         PIPELINE_CACHE_SOURCE_CONSTRUCTOR_ANCHOR,
@@ -889,7 +942,8 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                             PIPELINE_CACHE_STORAGE_THREAD_WAIT_PATCH, 1)
     source = source.replace(PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR,
                             PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH, 1)
-    return patch_android_pipeline_cache_save_lock(source)
+    return patch_android_pipeline_cache_lock_wait(
+        patch_android_pipeline_cache_save_lock(source))
 
 
 def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
@@ -905,11 +959,21 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
             marker = "  std::mutex driver_pipeline_cache_lock_;\n"
             if header.count(marker) != 1:
                 raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache header")
-            return header.replace(
+            header = header.replace(
                 marker,
                 marker
                 + "  std::atomic<bool> android_vk_cache_dirty_{false};\n"
                 + "  std::atomic<uint64_t> android_vk_pipeline_create_us_total_{0};\n",
+                1,
+            )
+        if "android_vk_pipeline_cache_lock_wait_us_total_" not in header:
+            marker = "  std::atomic<uint64_t> android_vk_pipeline_create_us_total_{0};\n"
+            if header.count(marker) != 1:
+                raise SystemExit("Unsupported Android pipeline cache metrics header")
+            header = header.replace(
+                marker,
+                marker +
+                "  std::atomic<uint64_t> android_vk_pipeline_cache_lock_wait_us_total_{0};\n",
                 1,
             )
         return header
@@ -921,6 +985,7 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
               "  std::mutex driver_pipeline_cache_save_lock_;\n"
               "  std::atomic<bool> android_vk_cache_dirty_{false};\n"
               "  std::atomic<uint64_t> android_vk_pipeline_create_us_total_{0};\n"
+              "  std::atomic<uint64_t> android_vk_pipeline_cache_lock_wait_us_total_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_loaded_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_rejected_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_saved_{0};\n"

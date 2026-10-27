@@ -22,9 +22,17 @@ The second, separate change is measurement only: pipeline creation time/count, p
 
 - loads only a complete cache file whose `VkPipelineCacheHeaderVersionOne` vendor ID, device ID, and UUID match;
 - creates the Vulkan cache with `pInitialData` only after validation;
-- uses that cache for all graphics-pipeline creation;
+- uses that cache for the Xenos game pipeline creation path;
 - writes to a temporary sibling, flushes, and renames it; and
 - never blocks the render thread for file I/O.
+
+The current ReXGlue tree still creates several auxiliary pipelines with
+`VK_NULL_HANDLE` (the gamma pass, render-target transfer pipelines, presenter output
+effects, and the immediate UI drawer). Those call sites are outside the first cache
+patch and must be measured before sharing the driver cache with them. The game cache
+also serializes `vkCreateGraphicsPipelines` calls because Vulkan externally
+synchronizes access to a `VkPipelineCache`; a per-thread cache/merge design is a
+separate optimization and is not assumed to help without lock-wait measurements.
 
 The Android app passes the private cache root already used for shader storage; no public-storage permission, game asset, cache, or log is committed. Tests cover patch anchors and cache-header validation behavior. Device evidence is mandatory before claiming an improvement.
 

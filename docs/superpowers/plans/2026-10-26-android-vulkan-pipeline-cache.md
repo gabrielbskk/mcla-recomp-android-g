@@ -4,7 +4,7 @@
 
 **Goal:** Persist and safely reuse the Vulkan driver pipeline cache across Android launches, with diagnostics that permit cold-versus-warm measurement.
 
-**Architecture:** The existing ReXGlue patcher remains the only writer of SDK files. It will insert self-contained cache-file handling into the SDK Vulkan pipeline cache: validate device metadata, initialise `VkPipelineCache` from valid bytes, save atomically on its storage writer, and publish counters through the project’s existing diagnostics path.
+**Architecture:** The existing ReXGlue patcher remains the only writer of SDK files. It will insert self-contained cache-file handling into the SDK Vulkan pipeline cache: validate device metadata, initialise `VkPipelineCache` from valid bytes, save atomically on its storage writer, and publish counters through the project’s existing diagnostics path. The shared handle is intentionally limited to the Xenos game pipeline cache until auxiliary pipeline creation is measured.
 
 **Tech Stack:** Python patcher/tests, ReXGlue v0.10.0 C++, Vulkan, Android private app storage, Termux ARM64 manual build.
 
@@ -24,6 +24,9 @@
 - Cache I/O must not block the graphics submission/render thread.
 - SDK patch anchors must fail closed if ReXGlue v0.10.0 source differs.
 - Cache metrics must distinguish loaded, rejected, saved, and newly created pipelines.
+- The first implementation covers the Xenos game pipelines in `pipeline_cache.cpp`.
+  Auxiliary Vulkan pipelines in the presenter, UI drawer, gamma pass, and render-target
+  transfer path still require separate measurement before they are folded into the shared cache.
 
 ---
 

@@ -102,6 +102,26 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
                                  text=True, timeout=15)
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
 
+    def test_save_retries_when_driver_cache_grows_during_snapshot(self):
+        compiler = shutil.which("clang++") or shutil.which("c++")
+        if not compiler:
+            self.skipTest("C++ compiler required")
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        start = patched.index("void VulkanPipelineCache::SaveAndroidPipelineCache()")
+        end = patched.index("void VulkanPipelineCache::LogAndroidPipelineCacheMetrics()", start)
+        method = patched[start:end].replace("std::ofstream", "ProbeOutput")
+        harness = (ROOT / "tests/pipeline_cache_save_harness.cpp").read_text()
+        with tempfile.TemporaryDirectory(prefix="mcla-cache-incomplete-") as directory:
+            source = Path(directory) / "test.cpp"
+            binary = Path(directory) / "test"
+            source.write_text(harness.replace("// INSERT_SAVE_METHOD", method))
+            build = subprocess.run([compiler, "-std=c++17", "-pthread", str(source),
+                                    "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            run = subprocess.run([str(binary)], cwd=directory, capture_output=True,
+                                 text=True, timeout=15)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
     def test_upgrades_current_cache_save_without_reapplying_unrelated_patches(self):
         current = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
         upgraded = PATCHER.patch_android_vulkan_pipeline_cache(current)
@@ -182,6 +202,19 @@ void VulkanPipelineCache::Shutdown() {
         self.assertIn("rename", patched)
         self.assertIn("rename failed", patched)
         self.assertNotIn("remove(driver_pipeline_cache_path_", patched)
+
+    def test_retries_rejected_persisted_cache_with_empty_cache(self):
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        self.assertIn("android_vk_cache_initial_data_rejected", patched)
+        self.assertIn("retrying empty", patched)
+        self.assertIn("create_info.initialDataSize = 0", patched)
+        self.assertIn("create_info.pInitialData = nullptr", patched)
+
+    def test_retries_incomplete_cache_data_without_marking_save_failed(self):
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        self.assertIn("VkResult android_vk_cache_data_result = VK_INCOMPLETE;", patched)
+        self.assertIn("android_vk_cache_data_result != VK_INCOMPLETE", patched)
+        self.assertIn("data.resize(data_size);", patched)
 
     def test_adds_handle_to_header(self):
         header = """class VulkanPipelineCache {

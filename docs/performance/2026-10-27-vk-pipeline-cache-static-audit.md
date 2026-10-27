@@ -14,7 +14,9 @@ run was performed for this audit.
   `pipelineCacheUUID`, then passes valid bytes as `pInitialData`.
 - `pipeline_cache.cpp:365-423` snapshots cache data under
   `driver_pipeline_cache_lock_`, releases that lock before temporary-file I/O,
-  and serializes saves with `driver_pipeline_cache_save_lock_`.
+  and serializes saves with `driver_pipeline_cache_save_lock_`. A driver that
+  rejects persisted bytes now gets a fresh empty cache, and `VK_INCOMPLETE`
+  snapshots retry with a larger buffer before the save is marked failed.
 - `pipeline_cache.cpp:3691-3703` passes `driver_pipeline_cache_` to the Xenos
   game `vkCreateGraphicsPipelines` call and accumulates wait time for the shared
   cache mutex in `android_vk_pipeline_cache_lock_wait_us_total`.
@@ -22,7 +24,8 @@ run was performed for this audit.
   the driver cache.
 - The harness in `tests/pipeline_cache_save_harness.cpp` proves that a pipeline
   can acquire the cache mutex while a save is doing file I/O, and that a new
-  pipeline leaves the dirty bit set for a later save.
+  pipeline leaves the dirty bit set for a later save. It also exercises the
+  `VK_INCOMPLETE` growth/retry path.
 
 ## Remaining blockers before a build
 
@@ -43,8 +46,9 @@ changing to per-thread caches before those measurements would be speculative.
 
 ## Validation status
 
-- Focused pipeline-cache tests: **16 passed**.
-- Full Python suite: **67 passed**.
+- Focused pipeline-cache tests: **19 passed** (including persisted-cache
+  rejection fallback and `VK_INCOMPLETE` growth retry).
+- Full Python suite: **70 passed**.
 - `git diff --check`: clean after the last commit.
 - `clang-tidy` was attempted but could not start because the existing
   `compile_commands.json` points to a missing `.cache/mcla-build-deps` directory;

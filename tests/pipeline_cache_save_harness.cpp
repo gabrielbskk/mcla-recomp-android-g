@@ -12,16 +12,27 @@
 #define REXGPU_INFO(...) ((void)0)
 #define REXGPU_WARN(...) ((void)0)
 using VkDevice = int;
+using VkResult = int;
 constexpr int VK_NULL_HANDLE = 0;
 constexpr int VK_SUCCESS = 0;
+constexpr int VK_INCOMPLETE = 5;
 bool fail_snapshot = false;
+bool grow_snapshot_once = false;
 namespace ui::vulkan {
 struct VulkanDevice {
   struct Functions {
     int vkGetPipelineCacheData(int, int, size_t* size, void* data) const {
       if (fail_snapshot) return -1;
-      *size = 4;
-      if (data) std::memcpy(data, "test", 4);
+      if (!data) {
+        *size = 4;
+        return VK_SUCCESS;
+      }
+      if (grow_snapshot_once && *size < 8) {
+        *size = 8;
+        return VK_INCOMPLETE;
+      }
+      *size = grow_snapshot_once ? 8 : 4;
+      std::memcpy(data, grow_snapshot_once ? "testdata" : "test", *size);
       return VK_SUCCESS;
     }
   } funcs;
@@ -79,18 +90,24 @@ int main() {
   assert(cache.android_vk_cache_saved_ == 1);
   assert(std::filesystem::file_size("cache.bin") == 4);
   assert(!std::filesystem::exists("cache.bin.tmp"));
+  cache.android_vk_cache_dirty_ = true;
+  grow_snapshot_once = true;
+  cache.SaveAndroidPipelineCache();
+  assert(std::filesystem::file_size("cache.bin") == 8);
+  assert(cache.android_vk_cache_saved_ == 2);
+  grow_snapshot_once = false;
   cache.android_vk_cache_dirty_ = false;
   cache.SaveAndroidPipelineCache();
-  assert(disk_opens == 1);
+  assert(disk_opens == 2);
   cache.android_vk_cache_dirty_ = true;
   fail_snapshot = true;
   cache.SaveAndroidPipelineCache();
   assert(cache.android_vk_cache_dirty_);
-  assert(disk_opens == 1);
+  assert(disk_opens == 2);
   fail_snapshot = false;
   cache.driver_pipeline_cache_path_ = "missing/cache.bin";
   cache.SaveAndroidPipelineCache();
   assert(cache.android_vk_cache_dirty_);
-  assert(cache.android_vk_cache_saved_ == 1);
+  assert(cache.android_vk_cache_saved_ == 2);
   std::cout << "pipeline save lock and retry: PASS\n";
 }

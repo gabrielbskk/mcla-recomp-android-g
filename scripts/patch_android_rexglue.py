@@ -817,6 +817,90 @@ def patch_android_pipeline_cache_save_lock(source: str) -> str:
     return patch_destroy_lock(source)
 
 
+def patch_android_pipeline_cache_save_retry(source: str) -> str:
+    """Retry cache snapshots when Vulkan reports that the output grew."""
+    if "VkResult android_vk_cache_data_result = VK_INCOMPLETE;" in source:
+        return source
+    old = (
+        "  std::vector<uint8_t> data(data_size);\n"
+        "  if (dfn.vkGetPipelineCacheData(device, driver_pipeline_cache_, &data_size, data.data()) != VK_SUCCESS) {\n"
+        "    save_failed();\n"
+        "    return;\n"
+        "  }\n"
+    )
+    new = (
+        "  std::vector<uint8_t> data(data_size);\n"
+        "  VkResult android_vk_cache_data_result = VK_INCOMPLETE;\n"
+        "  for (int attempt = 0; attempt < 3; ++attempt) {\n"
+        "    android_vk_cache_data_result = dfn.vkGetPipelineCacheData(\n"
+        "        device, driver_pipeline_cache_, &data_size, data.data());\n"
+        "    if (android_vk_cache_data_result == VK_SUCCESS) {\n"
+        "      break;\n"
+        "    }\n"
+        "    if (android_vk_cache_data_result != VK_INCOMPLETE || data_size <= data.size()) {\n"
+        "      break;\n"
+        "    }\n"
+        "    data.resize(data_size);\n"
+        "  }\n"
+        "  if (android_vk_cache_data_result != VK_SUCCESS) {\n"
+        "    save_failed();\n"
+        "    return;\n"
+        "  }\n"
+    )
+    if source.count(old) != 1:
+        raise SystemExit("Unsupported Android pipeline cache data-retry variant")
+    return source.replace(old, new, 1)
+
+
+def patch_android_pipeline_cache_create_fallback(source: str) -> str:
+    """Retry with an empty cache if a persisted blob is rejected by the driver."""
+    marker = "  bool android_vk_cache_initial_data_rejected = false;\n"
+    if marker in source:
+        return source
+    old = (
+        "  const VkResult result = dfn.vkCreatePipelineCache(device, &create_info, nullptr,\n"
+        "                                                    &driver_pipeline_cache_);\n"
+        "  if (result != VK_SUCCESS) {\n"
+        "    driver_pipeline_cache_ = VK_NULL_HANDLE;\n"
+        "    android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);\n"
+        "    REXGPU_WARN(\"Android Vulkan pipeline cache creation failed: {}\", int32_t(result));\n"
+        "  } else if (!initial_data.empty()) {\n"
+        "    android_vk_cache_loaded_.fetch_add(1, std::memory_order_relaxed);\n"
+        "    REXGPU_INFO(\"Android Vulkan pipeline cache loaded: {} bytes\", initial_data.size());\n"
+        "  } else {\n"
+        "    REXGPU_INFO(\"Android Vulkan pipeline cache started empty\");\n"
+        "  }\n"
+    )
+    new = (
+        "  bool android_vk_cache_initial_data_rejected = false;\n"
+        "  VkResult result = dfn.vkCreatePipelineCache(device, &create_info, nullptr,\n"
+        "                                                &driver_pipeline_cache_);\n"
+        "  if (result != VK_SUCCESS && !initial_data.empty()) {\n"
+        "    android_vk_cache_initial_data_rejected = true;\n"
+        "    android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);\n"
+        "    REXGPU_WARN(\"Android Vulkan pipeline cache rejected persisted data: {}; retrying empty\",\n"
+        "                 int32_t(result));\n"
+        "    create_info.initialDataSize = 0;\n"
+        "    create_info.pInitialData = nullptr;\n"
+        "    result = dfn.vkCreatePipelineCache(device, &create_info, nullptr,\n"
+        "                                       &driver_pipeline_cache_);\n"
+        "  }\n"
+        "  if (result != VK_SUCCESS) {\n"
+        "    driver_pipeline_cache_ = VK_NULL_HANDLE;\n"
+        "    android_vk_cache_rejected_.fetch_add(1, std::memory_order_relaxed);\n"
+        "    REXGPU_WARN(\"Android Vulkan pipeline cache creation failed: {}\", int32_t(result));\n"
+        "  } else if (!initial_data.empty() && !android_vk_cache_initial_data_rejected) {\n"
+        "    android_vk_cache_loaded_.fetch_add(1, std::memory_order_relaxed);\n"
+        "    REXGPU_INFO(\"Android Vulkan pipeline cache loaded: {} bytes\", initial_data.size());\n"
+        "  } else {\n"
+        "    REXGPU_INFO(\"Android Vulkan pipeline cache started empty\");\n"
+        "  }\n"
+    )
+    if source.count(old) != 1:
+        raise SystemExit("Unsupported Android pipeline cache creation-fallback variant")
+    return source.replace(old, new, 1)
+
+
 def patch_android_vulkan_pipeline_cache(source: str) -> str:
     """Add Android-private Vulkan driver cache handling to ReXGlue v0.10.0."""
     if "InitializeAndroidPipelineCache" in source:
@@ -904,8 +988,10 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                 if source.count(original) == 0:
                     raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
                 source = source.replace(original, replacement)
+        source = patch_android_pipeline_cache_save_lock(source)
+        source = patch_android_pipeline_cache_save_retry(source)
         return patch_android_pipeline_cache_lock_wait(
-            patch_android_pipeline_cache_save_lock(source))
+            patch_android_pipeline_cache_create_fallback(source))
     anchors = (
         PIPELINE_CACHE_SOURCE_INCLUDE_ANCHOR,
         PIPELINE_CACHE_SOURCE_CONSTRUCTOR_ANCHOR,
@@ -939,8 +1025,10 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                             PIPELINE_CACHE_STORAGE_THREAD_WAIT_PATCH, 1)
     source = source.replace(PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR,
                             PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH, 1)
+    source = patch_android_pipeline_cache_save_lock(source)
+    source = patch_android_pipeline_cache_save_retry(source)
     return patch_android_pipeline_cache_lock_wait(
-        patch_android_pipeline_cache_save_lock(source))
+        patch_android_pipeline_cache_create_fallback(source))
 
 
 def patch_android_vulkan_pipeline_cache_header(header: str) -> str:

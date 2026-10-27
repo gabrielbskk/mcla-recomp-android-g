@@ -684,6 +684,50 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
 )
 
 
+def patch_android_pipeline_cache_save_lock(source: str) -> str:
+    """Release the compiler/cache mutex before file I/O; serialize saves separately."""
+    if "std::mutex> save_lock(driver_pipeline_cache_save_lock_)" in source:
+        return source
+    replacements = (
+        (
+            "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n",
+            "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n"
+            "  std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);\n",
+        ),
+        (
+            "void VulkanPipelineCache::SaveAndroidPipelineCache() {\n"
+            "  std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);",
+            "void VulkanPipelineCache::SaveAndroidPipelineCache() {\n"
+            "  // Keep writers and cache reinitialization ordered, without blocking\n"
+            "  // pipeline creation on disk writes or rename. Lock order: save, cache.\n"
+            "  std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);\n"
+            "  std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);",
+        ),
+        (
+            '  const std::filesystem::path temporary_path = driver_pipeline_cache_path_.string() + ".tmp";',
+            "  const std::filesystem::path destination_path = driver_pipeline_cache_path_;\n"
+            "  lock.unlock();\n"
+            '  const std::filesystem::path temporary_path = destination_path.string() + ".tmp";',
+        ),
+        (
+            "  std::filesystem::rename(temporary_path, driver_pipeline_cache_path_, error);",
+            "  std::filesystem::rename(temporary_path, destination_path, error);",
+        ),
+        (
+            "    output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data_size));\n"
+            "    if (!output) {",
+            "    output.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data_size));\n"
+            "    output.close();  // Check buffered write/close errors before replacing the old cache.\n"
+            "    if (!output) {",
+        ),
+    )
+    for original, replacement in replacements:
+        if source.count(original) != 1:
+            raise SystemExit("Unsupported Android pipeline cache save-lock variant")
+        source = source.replace(original, replacement, 1)
+    return source
+
+
 def patch_android_vulkan_pipeline_cache(source: str) -> str:
     """Add Android-private Vulkan driver cache handling to ReXGlue v0.10.0."""
     if "InitializeAndroidPipelineCache" in source:
@@ -771,7 +815,7 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                 if source.count(original) == 0:
                     raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
                 source = source.replace(original, replacement)
-        return source
+        return patch_android_pipeline_cache_save_lock(source)
     anchors = (
         PIPELINE_CACHE_SOURCE_INCLUDE_ANCHOR,
         PIPELINE_CACHE_SOURCE_CONSTRUCTOR_ANCHOR,
@@ -803,13 +847,20 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
                             PIPELINE_CACHE_STORAGE_THREAD_PATCH, 1)
     source = source.replace(PIPELINE_CACHE_STORAGE_THREAD_WAIT_ANCHOR,
                             PIPELINE_CACHE_STORAGE_THREAD_WAIT_PATCH, 1)
-    return source.replace(PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR,
-                          PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH, 1)
+    source = source.replace(PIPELINE_CACHE_STORAGE_THREAD_METRICS_ANCHOR,
+                            PIPELINE_CACHE_STORAGE_THREAD_METRICS_PATCH, 1)
+    return patch_android_pipeline_cache_save_lock(source)
 
 
 def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
     """Add the driver cache handle and path to the ReXGlue pipeline-cache object."""
     if "driver_pipeline_cache_" in header:
+        if "driver_pipeline_cache_save_lock_" not in header:
+            marker = "  std::mutex driver_pipeline_cache_lock_;\n"
+            if header.count(marker) != 1:
+                raise SystemExit("Unsupported Android pipeline cache lock header")
+            header = header.replace(marker, marker +
+                                    "  std::mutex driver_pipeline_cache_save_lock_;\n", 1)
         if "android_vk_pipeline_create_us_total_" not in header:
             marker = "  std::mutex driver_pipeline_cache_lock_;\n"
             if header.count(marker) != 1:
@@ -827,6 +878,7 @@ def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
     marker = "  VkPipelineCache driver_pipeline_cache_ = VK_NULL_HANDLE;\n"
     fields = (marker + "  std::filesystem::path driver_pipeline_cache_path_;\n"
               "  std::mutex driver_pipeline_cache_lock_;\n"
+              "  std::mutex driver_pipeline_cache_save_lock_;\n"
               "  std::atomic<bool> android_vk_cache_dirty_{false};\n"
               "  std::atomic<uint64_t> android_vk_pipeline_create_us_total_{0};\n"
               "  std::atomic<uint64_t> android_vk_cache_loaded_{0};\n"

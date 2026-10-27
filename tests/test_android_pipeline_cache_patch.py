@@ -1,4 +1,7 @@
 import importlib.util
+import shutil
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -79,6 +82,36 @@ void VulkanPipelineCache::Shutdown() {
 
 
 class AndroidPipelineCachePatchTest(unittest.TestCase):
+    def test_save_allows_pipeline_creation_during_disk_io(self):
+        compiler = shutil.which("clang++") or shutil.which("c++")
+        if not compiler:
+            self.skipTest("C++ compiler required")
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
+        start = patched.index("void VulkanPipelineCache::SaveAndroidPipelineCache()")
+        end = patched.index("void VulkanPipelineCache::LogAndroidPipelineCacheMetrics()", start)
+        method = patched[start:end].replace("std::ofstream", "ProbeOutput")
+        harness = (ROOT / "tests/pipeline_cache_save_harness.cpp").read_text()
+        with tempfile.TemporaryDirectory(prefix="mcla-cache-save-") as directory:
+            source = Path(directory) / "test.cpp"
+            binary = Path(directory) / "test"
+            source.write_text(harness.replace("// INSERT_SAVE_METHOD", method))
+            build = subprocess.run([compiler, "-std=c++17", "-pthread", str(source),
+                                    "-o", str(binary)], capture_output=True, text=True)
+            self.assertEqual(build.returncode, 0, build.stderr)
+            run = subprocess.run([str(binary)], cwd=directory, capture_output=True,
+                                 text=True, timeout=15)
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_upgrades_current_cache_save_without_reapplying_unrelated_patches(self):
+        current = PATCHER.PIPELINE_CACHE_SOURCE_CONSTRUCTOR_PATCH
+        upgraded = PATCHER.patch_android_vulkan_pipeline_cache(current)
+        self.assertIn("driver_pipeline_cache_save_lock_", upgraded)
+        self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache(upgraded), upgraded)
+        header = PATCHER.patch_android_vulkan_pipeline_cache_header(
+            "class Cache {\n  void StorageWriteThread();\n};\n")
+        self.assertIn("std::mutex driver_pipeline_cache_save_lock_;", header)
+        self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache_header(header), header)
+
     def test_adds_validated_initial_data_and_atomic_write(self):
         patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
 

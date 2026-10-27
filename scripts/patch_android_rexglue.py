@@ -626,6 +626,72 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
 def patch_android_vulkan_pipeline_cache(source: str) -> str:
     """Add Android-private Vulkan driver cache handling to ReXGlue v0.10.0."""
     if "InitializeAndroidPipelineCache" in source:
+        # Older Android-patched SDK copies already have the cache feature, but
+        # may lack the dirty-bit and creation-time metrics added later. Upgrade
+        # those copies instead of silently treating them as fully current.
+        if "android_vk_pipeline_create_us_total_" not in source:
+            legacy_replacements = (
+                (
+                    "  driver_pipeline_cache_path_ = cache_path;\n",
+                    "  driver_pipeline_cache_path_ = cache_path;\n"
+                    "  android_vk_cache_dirty_.store(false, std::memory_order_relaxed);\n",
+                ),
+                (
+                    "  if (driver_pipeline_cache_ == VK_NULL_HANDLE || driver_pipeline_cache_path_.empty()) {\n",
+                    "  if (driver_pipeline_cache_ == VK_NULL_HANDLE || driver_pipeline_cache_path_.empty() ||\n"
+                    "      !android_vk_cache_dirty_.load(std::memory_order_relaxed)) {\n"
+                    "    return;\n"
+                    "  }\n"
+                    "  android_vk_cache_dirty_.store(false, std::memory_order_relaxed);\n"
+                    "  auto save_failed = [this]() {\n"
+                    "    android_vk_cache_dirty_.store(true, std::memory_order_relaxed);\n"
+                    "  };\n",
+                ),
+                (
+                    "      data_size == 0) {\n",
+                    "      data_size == 0) {\n"
+                    "    save_failed();\n",
+                ),
+                (
+                    "    if (!output) {\n      return;\n",
+                    "    if (!output) {\n      save_failed();\n      return;\n",
+                ),
+                (
+                    "  if (create_result == VK_SUCCESS) {\n    android_vk_pipelines_created_.fetch_add",
+                    "  if (create_result == VK_SUCCESS) {\n"
+                    "    android_vk_cache_dirty_.store(true, std::memory_order_relaxed);\n"
+                    "    android_vk_pipeline_create_us_total_.fetch_add(\n"
+                    "        std::chrono::duration_cast<std::chrono::microseconds>(\n"
+                    "            std::chrono::steady_clock::now() - android_pipeline_create_start)\n"
+                    "            .count(),\n"
+                    "        std::memory_order_relaxed);\n"
+                    "    android_vk_pipelines_created_.fetch_add",
+                ),
+            )
+            for original, replacement in legacy_replacements:
+                if source.count(original) != 1:
+                    raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache variant")
+                source = source.replace(original, replacement, 1)
+            source = source.replace(
+                "  VkResult create_result;\n  {\n",
+                "  VkResult create_result;\n"
+                "  const auto android_pipeline_create_start = std::chrono::steady_clock::now();\n"
+                "  {\n",
+                1,
+            )
+            source = source.replace(
+                "      std::chrono::steady_clock::now() + std::chrono::seconds(1);",
+                "      std::chrono::steady_clock::now() + std::chrono::seconds(10);",
+            )
+            source = source.replace(
+                "if (now >= next_android_vk_cache_save) {",
+                "if (now >= next_android_vk_cache_save &&\n"
+                "            android_vk_cache_dirty_.load(std::memory_order_relaxed)) {",
+            )
+            source = source.replace(
+                "next_android_vk_cache_save = now + std::chrono::seconds(1);",
+                "next_android_vk_cache_save = now + std::chrono::seconds(10);",
+            )
         return source
     anchors = (
         PIPELINE_CACHE_SOURCE_INCLUDE_ANCHOR,
@@ -665,6 +731,17 @@ def patch_android_vulkan_pipeline_cache(source: str) -> str:
 def patch_android_vulkan_pipeline_cache_header(header: str) -> str:
     """Add the driver cache handle and path to the ReXGlue pipeline-cache object."""
     if "driver_pipeline_cache_" in header:
+        if "android_vk_pipeline_create_us_total_" not in header:
+            marker = "  std::mutex driver_pipeline_cache_lock_;\n"
+            if header.count(marker) != 1:
+                raise SystemExit("Unsupported legacy Android Vulkan pipeline-cache header")
+            return header.replace(
+                marker,
+                marker
+                + "  std::atomic<bool> android_vk_cache_dirty_{false};\n"
+                + "  std::atomic<uint64_t> android_vk_pipeline_create_us_total_{0};\n",
+                1,
+            )
         return header
     if header.count(PIPELINE_CACHE_HEADER_ANCHOR) != 1:
         raise SystemExit("Expected ReXGlue v0.10.0 Vulkan pipeline cache header anchor")

@@ -132,6 +132,30 @@ class AndroidPipelineCachePatchTest(unittest.TestCase):
         )
         self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache(repaired), repaired)
 
+    def test_orders_cache_destroy_after_serialized_saves(self):
+        source = PATCHER.PIPELINE_CACHE_SOURCE_CONSTRUCTOR_PATCH + """
+void VulkanPipelineCache::Shutdown() {
+  const ui::vulkan::VulkanDevice* const vulkan_device = command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  {
+    std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
+    if (driver_pipeline_cache_ != VK_NULL_HANDLE) {
+      dfn.vkDestroyPipelineCache(device, driver_pipeline_cache_, nullptr);
+      driver_pipeline_cache_ = VK_NULL_HANDLE;
+    }
+  }
+}
+"""
+        patched = PATCHER.patch_android_vulkan_pipeline_cache(source)
+        destroy_start = patched.index("void VulkanPipelineCache::Shutdown()")
+        destroy_body = patched[destroy_start:]
+        self.assertIn(
+            "std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);",
+            destroy_body,
+        )
+        self.assertEqual(PATCHER.patch_android_vulkan_pipeline_cache(patched), patched)
+
     def test_adds_validated_initial_data_and_atomic_write(self):
         patched = PATCHER.patch_android_vulkan_pipeline_cache(PIPELINE_CACHE_SOURCE)
 

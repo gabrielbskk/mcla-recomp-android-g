@@ -604,6 +604,7 @@ PIPELINE_CACHE_DESTROY_ANCHOR = """  const VkDevice device = vulkan_device->devi
 PIPELINE_CACHE_DESTROY_PATCH = """  const VkDevice device = vulkan_device->device();
 
   {
+    std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);
     std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
     if (driver_pipeline_cache_ != VK_NULL_HANDLE) {
       dfn.vkDestroyPipelineCache(device, driver_pipeline_cache_, nullptr);
@@ -686,6 +687,30 @@ PIPELINE_CACHE_CREATE_METRICS_PATCH = (
 
 def patch_android_pipeline_cache_save_lock(source: str) -> str:
     """Release the compiler/cache mutex before file I/O; serialize saves separately."""
+    def patch_destroy_lock(text: str) -> str:
+        old = """  {
+    std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
+    if (driver_pipeline_cache_ != VK_NULL_HANDLE) {
+      dfn.vkDestroyPipelineCache(device, driver_pipeline_cache_, nullptr);
+      driver_pipeline_cache_ = VK_NULL_HANDLE;
+    }
+  }
+"""
+        new = """  {
+    std::lock_guard<std::mutex> save_lock(driver_pipeline_cache_save_lock_);
+    std::lock_guard<std::mutex> lock(driver_pipeline_cache_lock_);
+    if (driver_pipeline_cache_ != VK_NULL_HANDLE) {
+      dfn.vkDestroyPipelineCache(device, driver_pipeline_cache_, nullptr);
+      driver_pipeline_cache_ = VK_NULL_HANDLE;
+    }
+  }
+"""
+        if old not in text:
+            return text
+        if text.count(old) != 1:
+            raise SystemExit("Unsupported Android pipeline cache destroy-lock variant")
+        return text.replace(old, new, 1)
+
     save_signature = "void VulkanPipelineCache::SaveAndroidPipelineCache() {\n"
     save_start = source.find(save_signature)
     save_end = source.find("void VulkanPipelineCache::LogAndroidPipelineCacheMetrics()",
@@ -695,7 +720,7 @@ def patch_android_pipeline_cache_save_lock(source: str) -> str:
     if (save_lock_marker in save_body and
             "  std::unique_lock<std::mutex> lock(driver_pipeline_cache_lock_);" in save_body and
             "  lock.unlock();\n" in save_body):
-        return source
+        return patch_destroy_lock(source)
     init_signature = "void VulkanPipelineCache::InitializeAndroidPipelineCache(const std::filesystem::path& cache_path) {\n"
     init_start = source.find(init_signature)
     init_end = source.find(save_signature, init_start)
@@ -740,7 +765,7 @@ def patch_android_pipeline_cache_save_lock(source: str) -> str:
         if source.count(original) != 1:
             raise SystemExit("Unsupported Android pipeline cache save-lock variant")
         source = source.replace(original, replacement, 1)
-    return source
+    return patch_destroy_lock(source)
 
 
 def patch_android_vulkan_pipeline_cache(source: str) -> str:
